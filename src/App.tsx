@@ -97,7 +97,7 @@ export default function App() {
   const [editingProjectNewName, setEditingProjectNewName] = useState('');
   const [editingProjectNewColor, setEditingProjectNewColor] = useState('#2563eb');
 
-  // משימה חדשה
+  // משימה חדשה (כעת שדות רשות חוץ מהתיאור)
   const [newProject, setNewProject] = useState('');
   const [newTopic, setNewTopic] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -204,9 +204,9 @@ export default function App() {
         return {
           id: d.id,
           project: data.project || 'כללי',
-          topic: data.topic || 'כללי',
+          topic: data.topic || '',
           description: data.description || '',
-          assignee: data.assignee || 'ללא אחראי',
+          assignee: data.assignee || '',
           startDate: data.startDate || '',
           dueDate: data.dueDate || '',
           completedDate: data.completedDate || '',
@@ -328,19 +328,23 @@ export default function App() {
     await deleteDoc(doc(db, 'projects_list', projectId));
   };
 
+  // יצירת משימה - רק תיאור חובה, שאר השדות אופציונליים
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (userRole !== 'מנהל') return;
-    if (!newDescription.trim()) return;
+    if (!newDescription.trim()) {
+      alert("נא להזין תיאור משימה.");
+      return;
+    }
 
     const todayStr = new Date().toISOString().split('T')[0];
     await addDoc(collection(db, 'tasks'), {
       project: newProject || (projects[0]?.name || 'פרויקט כללי'),
-      topic: newTopic.trim() || 'כללי',
+      topic: newTopic.trim() || '',
       description: newDescription.trim(),
-      assignee: newAssignee.trim() || currentUser || 'ללא אחראי',
+      assignee: newAssignee.trim() || '',
       startDate: todayStr,
-      dueDate: newDueDate || todayStr,
+      dueDate: newDueDate || '',
       completedDate: '',
       delays: 0,
       priority: newPriority,
@@ -356,6 +360,7 @@ export default function App() {
     setNewDescription('');
     setNewTopic('');
     setNewDueDate('');
+    setNewAssignee('');
     setShowAddTaskModal(false);
   };
 
@@ -375,7 +380,7 @@ export default function App() {
       description: `${task.description} (העתק)`,
       assignee: task.assignee,
       startDate: todayStr,
-      dueDate: task.dueDate || todayStr,
+      dueDate: task.dueDate || '',
       completedDate: '',
       delays: 0,
       priority: task.priority,
@@ -395,11 +400,11 @@ export default function App() {
 
     await updateDoc(doc(db, 'tasks', editingTask.id), {
       project: editingTask.project,
-      topic: editingTask.topic,
+      topic: editingTask.topic || '',
       description: editingTask.description,
-      assignee: editingTask.assignee,
+      assignee: editingTask.assignee || '',
       startDate: editingTask.startDate,
-      dueDate: editingTask.dueDate,
+      dueDate: editingTask.dueDate || '',
       completedDate: editingTask.completedDate || '',
       delays: editingTask.delays || 0,
       priority: editingTask.priority,
@@ -641,8 +646,8 @@ export default function App() {
     text += `סה"כ: ${relevant.length} משימות\n\n`;
 
     relevant.forEach((t, idx) => {
-      text += `${idx + 1}. *[${t.project}]* ${t.topic} - ${t.description}\n`;
-      text += `   👤 אחראי: ${t.assignee} | 📅 יעד: ${t.dueDate} | עדיפות: ${t.priority} | סטטוס: ${t.status}\n`;
+      text += `${idx + 1}. *[${t.project}]* ${t.topic || 'ללא נושא'} - ${t.description}\n`;
+      text += `   👤 אחראי: ${t.assignee || 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | עדיפות: ${t.priority} | סטטוס: ${t.status}\n`;
       if (t.subtasks && t.subtasks.length > 0) {
         const completedCount = t.subtasks.filter((s) => s.completed).length;
         text += `   ☑️ תתי-משימות: ${completedCount}/${t.subtasks.length} הושלמו\n`;
@@ -1220,7 +1225,7 @@ export default function App() {
 
         </div>
 
-        {/* שורת חיפוש וסינונים (כולל הסטטוס החדש "נדחה") */}
+        {/* שורת חיפוש וסינונים (כולל הסטטוס "נדחה") */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
           <input
             type="text"
@@ -1322,7 +1327,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא:</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא (רשות):</label>
                   <input
                     type="text"
                     value={editingTask.topic}
@@ -1332,7 +1337,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור משימה:</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור משימה (חובה):</label>
                   <textarea
                     value={editingTask.description}
                     onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
@@ -1343,7 +1348,7 @@ export default function App() {
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי:</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי (רשות):</label>
                     <input
                       type="text"
                       value={editingTask.assignee}
@@ -1367,7 +1372,7 @@ export default function App() {
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד:</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד (רשות):</label>
                     <input
                       type="date"
                       value={editingTask.dueDate}
@@ -1441,7 +1446,7 @@ export default function App() {
                   <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     שמור
                   </button>
-                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} style={{ padding: '12px 16px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -1490,7 +1495,7 @@ export default function App() {
           </div>
         )}
 
-        {/* מודאל משימה חדשה */}
+        {/* מודאל משימה חדשה (שדות רשות) */}
         {showAddTaskModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '520px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
@@ -1509,7 +1514,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא / תת-נושא:</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא / תת-נושא (רשות):</label>
                   <input
                     type="text"
                     value={newTopic}
@@ -1520,7 +1525,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור המשימה:</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור המשימה (חובה):</label>
                   <textarea
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
@@ -1532,7 +1537,7 @@ export default function App() {
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי:</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי (רשות):</label>
                     <input
                       type="text"
                       value={newAssignee}
@@ -1556,7 +1561,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד:</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד (רשות):</label>
                   <input
                     type="date"
                     value={newDueDate}
@@ -1696,9 +1701,13 @@ export default function App() {
                               )}
                               
                               <td style={{ padding: '14px 16px', fontWeight: '800', color: pColor }}>
-                                <span style={{ backgroundColor: `${pColor}15`, padding: '4px 8px', borderRadius: '6px' }}>
-                                  {t.topic}
-                                </span>
+                                {t.topic ? (
+                                  <span style={{ backgroundColor: `${pColor}15`, padding: '4px 8px', borderRadius: '6px' }}>
+                                    {t.topic}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: theme.textMuted }}>-</span>
+                                )}
                               </td>
 
                               {/* תיאור משימה + פלוס קטן להוספת תת-משימה */}
@@ -1792,12 +1801,15 @@ export default function App() {
                               </td>
 
                               <td style={{ padding: '14px 12px' }}>
-                                <span style={{ backgroundColor: theme.subCardBg, padding: '4px 10px', borderRadius: '12px', fontSize: '12px', color: theme.textMain, fontWeight: '700' }}>
-                                  👤 {t.assignee}
-                                </span>
+                                {t.assignee ? (
+                                  <span style={{ backgroundColor: theme.subCardBg, padding: '4px 10px', borderRadius: '12px', fontSize: '12px', color: theme.textMain, fontWeight: '700' }}>
+                                    👤 {t.assignee}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: theme.textMuted, fontSize: '12px' }}>-</span>
+                                )}
                               </td>
 
-                              {/* עדיפות נקיות ללא צבעים בסוגריים */}
                               <td style={{ padding: '14px 10px' }}>
                                 <span style={{
                                   padding: '4px 10px',
@@ -1823,7 +1835,7 @@ export default function App() {
                               </td>
 
                               <td style={{ padding: '14px 12px', color: theme.textMain, fontWeight: '700', fontSize: '12px' }}>
-                                📅 {t.dueDate}
+                                {t.dueDate ? `📅 ${t.dueDate}` : <span style={{ color: theme.textMuted }}>-</span>}
                               </td>
 
                               <td style={{ padding: '14px 12px', color: t.completedDate ? '#16a34a' : theme.textMuted, fontWeight: '700', fontSize: '12px' }}>
@@ -1868,7 +1880,6 @@ export default function App() {
                                 )}
                               </td>
 
-                              {/* סטטוס כולל "נדחה" */}
                               <td style={{ padding: '14px 14px' }}>
                                 <select
                                   value={t.status}
@@ -2069,7 +2080,7 @@ export default function App() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                               <span style={{ backgroundColor: `${pColor}15`, color: pColor, fontWeight: '800', fontSize: '12px', padding: '3px 8px', borderRadius: '6px' }}>
-                                {t.topic}
+                                {t.topic || 'כללי'}
                               </span>
                               <span style={{
                                 padding: '3px 8px',
@@ -2197,10 +2208,12 @@ export default function App() {
                           )}
 
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '12px', color: theme.textMuted }}>
-                            <span style={{ backgroundColor: theme.cardBg, padding: '3px 8px', borderRadius: '10px', fontWeight: '700', color: theme.textMain }}>
-                              👤 {t.assignee}
-                            </span>
-                            <span>📅 יעד: {t.dueDate}</span>
+                            {t.assignee && (
+                              <span style={{ backgroundColor: theme.cardBg, padding: '3px 8px', borderRadius: '10px', fontWeight: '700', color: theme.textMain }}>
+                                👤 {t.assignee}
+                              </span>
+                            )}
+                            {t.dueDate && <span>📅 יעד: {t.dueDate}</span>}
                             {delayDays > 0 && (
                               <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '6px', fontWeight: '800' }}>
                                 איחור {delayDays} ימים
@@ -2256,6 +2269,7 @@ export default function App() {
                             )}
                           </div>
 
+                          {/* פעולות מנהל בכרטיסייה */}
                           {userRole === 'מנהל' && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', borderTop: `1px solid ${theme.border}`, paddingTop: '8px' }}>
                               
