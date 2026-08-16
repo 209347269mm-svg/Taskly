@@ -1,388 +1,325 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from './firebase';
 import { signInAnonymously, onAuthStateChanged, User } from 'firebase/auth';
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  onSnapshot, 
-  deleteDoc, 
-  doc, 
-  updateDoc, 
-  serverTimestamp 
+import {
+  collection,
+  addDoc,
+  query,
+  onSnapshot,
+  deleteDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  orderBy
 } from 'firebase/firestore';
 
-interface Project {
+interface Note {
   id: string;
-  name: string;
-  userId: string;
-}
-
-interface Task {
-  id: string;
-  text: string;
-  completed: boolean;
-  projectId: string;
-  userId: string;
+  user: string;
+  project: string;
+  topic: string;
+  content: string;
+  timestamp?: any;
 }
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string>('');
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
   
-  const [newTaskText, setNewTaskText] = useState('');
-  const [newProjectName, setNewProjectName] = useState('');
-  const [isAddingProject, setIsAddingProject] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // שדות טופס
+  const [userName, setUserName] = useState('');
+  const [selectedProject, setSelectedProject] = useState('MBDA');
+  const [selectedTopic, setSelectedTopic] = useState('');
+  const [content, setContent] = useState('');
 
-  // 1. חיבור אנונימי ברקע
+  // פרויקטים ונושאים
+  const [projectsList, setProjectsList] = useState<string[]>(['MBDA', 'אוקראינה']);
+  const [projectTopicsMap, setProjectTopicsMap] = useState<{ [key: string]: string[] }>({
+    'MBDA': ['ספרות'],
+    'אוקראינה': ['תקלות']
+  });
+
+  const [newProjectInput, setNewProjectInput] = useState('');
+  const [newTopicInput, setNewTopicInput] = useState('');
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [showAddTopic, setShowAddTopic] = useState(false);
+
+  // 1. חיבור אנונימי שקט ברקע
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        setLoading(false);
       } else {
-        signInAnonymously(auth)
-          .then((res) => {
-            setUser(res.user);
-            setLoading(false);
-          })
-          .catch((err) => {
-            console.error("Auth error:", err);
-            setLoading(false);
-          });
+        signInAnonymously(auth).catch((err) => console.error("Auth error:", err));
       }
     });
-
     return () => unsubscribe();
   }, []);
 
-  // 2. טעינת פרויקטים
+  // 2. טעינת רשימת הפתקים/הערות
   useEffect(() => {
     if (!user) return;
 
-    const q = query(
-      collection(db, 'projects'),
-      where('userId', '==', user.uid)
-    );
-
+    const q = query(collection(db, 'notes'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedProjects: Project[] = snapshot.docs.map((docSnap) => ({
+      const fetched: Note[] = snapshot.docs.map((docSnap) => ({
         id: docSnap.id,
-        ...(docSnap.data() as Omit<Project, 'id'>)
+        ...(docSnap.data() as Omit<Note, 'id'>)
       }));
-
-      setProjects(fetchedProjects);
-
-      if (fetchedProjects.length > 0 && !activeProjectId) {
-        setActiveProjectId(fetchedProjects[0].id);
-      }
-    }, (error) => {
-      console.error("Projects error:", error);
-    });
+      setNotes(fetched);
+    }, (err) => console.error("Notes read error:", err));
 
     return () => unsubscribe();
-  }, [user, activeProjectId]);
+  }, [user]);
 
-  // 3. טעינת משימות
+  // טעינת נושאים עבור הפרויקט הנבחר
   useEffect(() => {
-    if (!user || !activeProjectId) {
-      setTasks([]);
+    const topics = projectTopicsMap[selectedProject] || [];
+    if (topics.length > 0) {
+      setSelectedTopic(topics[0]);
+    } else {
+      setSelectedTopic('');
+    }
+  }, [selectedProject, projectTopicsMap]);
+
+  // הוספת פרויקט חדש לרשימה
+  const handleAddProject = () => {
+    if (!newProjectInput.trim()) return;
+    const name = newProjectInput.trim();
+    if (!projectsList.includes(name)) {
+      setProjectsList([...projectsList, name]);
+      setProjectTopicsMap({ ...projectTopicsMap, [name]: [] });
+      setSelectedProject(name);
+    }
+    setNewProjectInput('');
+    setShowAddProject(false);
+  };
+
+  // הוספת נושא/תת-נושא לפרויקט הנוכחי
+  const handleAddTopic = () => {
+    if (!newTopicInput.trim() || !selectedProject) return;
+    const topic = newTopicInput.trim();
+    const currentTopics = projectTopicsMap[selectedProject] || [];
+    if (!currentTopics.includes(topic)) {
+      const updated = { ...projectTopicsMap, [selectedProject]: [...currentTopics, topic] };
+      setProjectTopicsMap(updated);
+      setSelectedTopic(topic);
+    }
+    setNewTopicInput('');
+    setShowAddTopic(false);
+  };
+
+  // שליחת הערה / משימה
+  const handleSubmitNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!content.trim() || !userName.trim()) {
+      alert('נא למלא שם ותוכן.');
       return;
     }
 
-    const q = query(
-      collection(db, 'tasks'),
-      where('userId', '==', user.uid),
-      where('projectId', '==', activeProjectId)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedTasks: Task[] = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<Task, 'id'>)
-      }));
-      setTasks(fetchedTasks);
-    }, (error) => {
-      console.error("Tasks error:", error);
-    });
-
-    return () => unsubscribe();
-  }, [user, activeProjectId]);
-
-  // הוספת פרויקט
-  const handleAddProject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProjectName.trim() || !user) return;
-
     try {
-      const docRef = await addDoc(collection(db, 'projects'), {
-        name: newProjectName.trim(),
-        userId: user.uid,
+      await addDoc(collection(db, 'notes'), {
+        user: userName.trim(),
+        project: selectedProject,
+        topic: selectedTopic || 'כללי',
+        content: content.trim(),
         createdAt: serverTimestamp()
       });
-
-      setActiveProjectId(docRef.id);
-      setNewProjectName('');
-      setIsAddingProject(false);
+      setContent('');
     } catch (err) {
-      console.error("Error adding project:", err);
+      console.error("Error adding note:", err);
     }
   };
 
-  // מחיקת פרויקט
-  const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm("האם למחוק את הפרויקט וכל המשימות שבו?")) return;
-
+  // מחיקת הערה
+  const handleDeleteNote = async (id: string) => {
+    if (!window.confirm("למחוק הערה זו?")) return;
     try {
-      await deleteDoc(doc(db, 'projects', projectId));
-
-      tasks.forEach(async (task) => {
-        if (task.projectId === projectId) {
-          await deleteDoc(doc(db, 'tasks', task.id));
-        }
-      });
-
-      const remaining = projects.filter((p) => p.id !== projectId);
-      setActiveProjectId(remaining.length > 0 ? remaining[0].id : '');
+      await deleteDoc(doc(db, 'notes', id));
     } catch (err) {
-      console.error("Error deleting project:", err);
+      console.error("Error deleting note:", err);
     }
   };
-
-  // הוספת משימה
-  const handleAddTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTaskText.trim() || !user || !activeProjectId) return;
-
-    try {
-      await addDoc(collection(db, 'tasks'), {
-        text: newTaskText.trim(),
-        completed: false,
-        projectId: activeProjectId,
-        userId: user.uid,
-        createdAt: serverTimestamp()
-      });
-
-      setNewTaskText('');
-    } catch (err) {
-      console.error("Error adding task:", err);
-    }
-  };
-
-  // שינוי סטטוס
-  const toggleTask = async (id: string, currentCompleted: boolean) => {
-    try {
-      await updateDoc(doc(db, 'tasks', id), {
-        completed: !currentCompleted
-      });
-    } catch (err) {
-      console.error("Error toggling task:", err);
-    }
-  };
-
-  // מחיקת משימה
-  const deleteTask = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'tasks', id));
-    } catch (err) {
-      console.error("Error deleting task:", err);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-        <p style={{ color: '#0070f3', fontSize: '18px', fontWeight: 'bold' }}>טוען אפליקציה...</p>
-      </div>
-    );
-  }
-
-  const activeProject = projects.find((p) => p.id === activeProjectId);
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px', fontFamily: 'system-ui, -apple-system, sans-serif', direction: 'rtl', minHeight: '100vh' }}>
+    <div style={{ maxWidth: '650px', margin: '0 auto', padding: '20px 16px', fontFamily: 'system-ui, -apple-system, sans-serif', direction: 'rtl' }}>
       
-      {/* כותרת */}
-      <h1 style={{ textAlign: 'center', marginBottom: '24px', color: '#0f172a', fontSize: '24px', fontWeight: '800' }}>
-        ניהול משימות ופרויקטים 📋
-      </h1>
-
-      {/* סרגל גלילה לפרויקטים */}
-      <div style={{ marginBottom: '20px' }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '8px', 
-          overflowX: 'auto', 
-          paddingBottom: '8px'
-        }}>
-          {projects.map((proj) => {
-            const isActive = proj.id === activeProjectId;
-            return (
-              <div
-                key={proj.id}
-                onClick={() => setActiveProjectId(proj.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 16px',
-                  borderRadius: '20px',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  backgroundColor: isActive ? '#0070f3' : '#f1f5f9',
-                  color: isActive ? '#ffffff' : '#334155',
-                  fontWeight: isActive ? '700' : '500',
-                  border: isActive ? '1px solid #0070f3' : '1px solid #e2e8f0',
-                  boxShadow: isActive ? '0 2px 4px rgba(0,112,243,0.2)' : 'none'
-                }}
-              >
-                <span>📁 {proj.name}</span>
-                {isActive && (
-                  <span 
-                    onClick={(e) => handleDeleteProject(proj.id, e)} 
-                    style={{ marginRight: '6px', cursor: 'pointer', opacity: 0.8, fontSize: '13px' }}
-                    title="מחק פרויקט"
-                  >
-                    ✕
-                  </span>
-                )}
-              </div>
-            );
-          })}
-
-          {/* כפתור הוספת פרויקט */}
-          <button
-            onClick={() => setIsAddingProject(!isAddingProject)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '8px 14px',
-              borderRadius: '20px',
-              border: '1px dashed #94a3b8',
-              backgroundColor: '#ffffff',
-              color: '#475569',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              fontSize: '14px',
-              fontWeight: '600'
-            }}
-          >
-            + פרויקט חדש
-          </button>
+      {/* טופס הוספה */}
+      <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+        
+        {/* שם משתמש (נקי ללא דוגמה) */}
+        <div style={{ marginBottom: '14px' }}>
+          <label style={{ display: 'block', fontWeight: '600', marginBottom: '6px', color: '#334155' }}>
+            שם מלא / משתמש:
+          </label>
+          <input
+            type="text"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
+            placeholder="הזן את שמך..."
+            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box' }}
+          />
         </div>
 
-        {/* טופס פרויקט חדש */}
-        {isAddingProject && (
-          <form onSubmit={handleAddProject} style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-            <input
-              type="text"
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="שם הפרויקט החדש..."
-              autoFocus
-              style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '15px' }}
-            />
-            <button 
-              type="submit" 
-              style={{ padding: '10px 16px', borderRadius: '8px', background: '#22c55e', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+        {/* בחירת פרויקט */}
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <label style={{ fontWeight: '600', color: '#334155' }}>פרויקט:</label>
+            <button
+              type="button"
+              onClick={() => setShowAddProject(!showAddProject)}
+              style={{ background: 'none', border: 'none', color: '#0070f3', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
             >
-              שמור
+              {showAddProject ? 'סגור' : '+ פרויקט חדש'}
             </button>
-            <button 
-              type="button" 
-              onClick={() => setIsAddingProject(false)} 
-              style={{ padding: '10px 14px', borderRadius: '8px', background: '#e2e8f0', color: '#334155', border: 'none', cursor: 'pointer' }}
+          </div>
+
+          {showAddProject ? (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <input
+                type="text"
+                value={newProjectInput}
+                onChange={(e) => setNewProjectInput(e.target.value)}
+                placeholder="שם פרויקט חדש..."
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none' }}
+              />
+              <button
+                type="button"
+                onClick={handleAddProject}
+                style={{ padding: '8px 14px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                הוסף
+              </button>
+            </div>
+          ) : (
+            <select
+              value={selectedProject}
+              onChange={(e) => setSelectedProject(e.target.value)}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', backgroundColor: '#fff', boxSizing: 'border-box' }}
             >
-              ביטול
+              {projectsList.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* בחירת נושא */}
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <label style={{ fontWeight: '600', color: '#334155' }}>נושא / תת-נושא:</label>
+            <button
+              type="button"
+              onClick={() => setShowAddTopic(!showAddTopic)}
+              style={{ background: 'none', border: 'none', color: '#0070f3', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+            >
+              {showAddTopic ? 'סגור' : '+ נושא חדש'}
             </button>
-          </form>
-        )}
+          </div>
+
+          {showAddTopic ? (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <input
+                type="text"
+                value={newTopicInput}
+                onChange={(e) => setNewTopicInput(e.target.value)}
+                placeholder="שם נושא חדש..."
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none' }}
+              />
+              <button
+                type="button"
+                onClick={handleAddTopic}
+                style={{ padding: '8px 14px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                הוסף
+              </button>
+            </div>
+          ) : (
+            <select
+              value={selectedTopic}
+              onChange={(e) => setSelectedTopic(e.target.value)}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', backgroundColor: '#fff', boxSizing: 'border-box' }}
+            >
+              {(projectTopicsMap[selectedProject] || []).length > 0 ? (
+                projectTopicsMap[selectedProject].map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))
+              ) : (
+                <option value="">ללא נושאים (הוסף חדש)</option>
+              )}
+            </select>
+          )}
+        </div>
+
+        {/* תוכן ההערה */}
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontWeight: '600', marginBottom: '6px', color: '#334155' }}>
+            הערות:
+          </label>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="כתוב כאן הערה או משימה..."
+            rows={3}
+            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <button
+          onClick={handleSubmitNote}
+          style={{ width: '100%', padding: '12px', background: '#0070f3', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '700', cursor: 'pointer' }}
+        >
+          הוסף הערה
+        </button>
       </div>
 
-      <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '20px 0' }} />
+      {/* רשימת ההערות שהוזנו */}
+      <h2 style={{ fontSize: '18px', color: '#0f172a', marginBottom: '12px' }}>
+        הערות ומשימות שנרשמו:
+      </h2>
 
-      {/* משימות תחת הפרויקט */}
-      {activeProject ? (
-        <div>
-          <h2 style={{ fontSize: '18px', color: '#1e293b', marginBottom: '14px' }}>
-            משימות עבור: <strong>{activeProject.name}</strong>
-          </h2>
-
-          <form onSubmit={handleAddTask} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            <input
-              type="text"
-              value={newTaskText}
-              onChange={(e) => setNewTaskText(e.target.value)}
-              placeholder={`הוסף משימה ל-${activeProject.name}...`}
-              style={{ flex: 1, padding: '12px 14px', fontSize: '15px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
-            />
-            <button 
-              type="submit" 
-              style={{ padding: '12px 18px', fontSize: '15px', cursor: 'pointer', borderRadius: '8px', background: '#0070f3', color: '#fff', border: 'none', fontWeight: 'bold' }}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {notes.length === 0 ? (
+          <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px 0' }}>
+            עדיין לא נרשמו הערות.
+          </p>
+        ) : (
+          notes.map((note) => (
+            <div
+              key={note.id}
+              style={{
+                backgroundColor: '#ffffff',
+                borderRadius: '8px',
+                padding: '14px 16px',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
+              }}
             >
-              + הוסף
-            </button>
-          </form>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {tasks.length === 0 ? (
-              <div style={{ textAlign: 'center', color: '#94a3b8', padding: '30px 0' }}>
-                אין משימות עדיין בפרויקט זה.
-              </div>
-            ) : (
-              tasks.map((task) => (
-                <div
-                  key={task.id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '12px 16px',
-                    borderRadius: '8px',
-                    backgroundColor: '#f8fafc',
-                    border: '1px solid #e2e8f0'
-                  }}
-                >
-                  <div 
-                    onClick={() => toggleTask(task.id, task.completed)} 
-                    style={{ cursor: 'pointer', flex: 1, display: 'flex', alignItems: 'center', gap: '10px' }}
-                  >
-                    <span style={{ fontSize: '18px', color: task.completed ? '#22c55e' : '#94a3b8' }}>
-                      {task.completed ? '✔' : '○'}
-                    </span>
-                    <span style={{ 
-                      textDecoration: task.completed ? 'line-through' : 'none', 
-                      color: task.completed ? '#94a3b8' : '#1e293b',
-                      fontSize: '15px'
-                    }}>
-                      {task.text}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => deleteTask(task.id)}
-                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '16px', padding: '4px 8px' }}
-                    title="מחק משימה"
-                  >
-                    🗑️
-                  </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <div>
+                  <span style={{ fontWeight: '700', color: '#0f172a', marginLeft: '8px' }}>{note.user}</span>
+                  <span style={{ fontSize: '12px', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '12px', marginLeft: '6px' }}>
+                    {note.project}
+                  </span>
+                  <span style={{ fontSize: '12px', backgroundColor: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: '12px' }}>
+                    {note.topic}
+                  </span>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-      ) : (
-        <div style={{ textAlign: 'center', color: '#64748b', padding: '40px 0' }}>
-          <p style={{ fontSize: '16px', marginBottom: '8px' }}>אין כרגע פרויקטים פעילים.</p>
-          <p style={{ fontSize: '14px', color: '#94a3b8' }}>לחץ על <strong>"+ פרויקט חדש"</strong> למעלה כדי להתחיל!</p>
-        </div>
-      )}
+                <button
+                  onClick={() => handleDeleteNote(note.id)}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}
+                >
+                  🗑️
+                </button>
+              </div>
+
+              <div style={{ color: '#334155', fontSize: '15px', whiteSpace: 'pre-wrap' }}>
+                {note.content}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
 
     </div>
   );
