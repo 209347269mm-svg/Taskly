@@ -37,9 +37,9 @@ interface Task {
   dueDate: string;
   completedDate?: string;
   delays: number;
-  priority: 'נמוכה' | 'בינונית' | 'דחופה' | 'קריטית';
+  priority: 'נמוכה' | 'בינונית' | 'גבוהה';
   isArchived: boolean;
-  isDeleted: boolean; // סל מחזור
+  isDeleted: boolean;
   status: 'פתוח' | 'בביצוע' | 'הושלם';
   notes: NoteItem[];
   subtasks: SubTask[];
@@ -97,14 +97,15 @@ export default function App() {
   const [newDescription, setNewDescription] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
   const [newDueDate, setNewDueDate] = useState('');
-  const [newPriority, setNewPriority] = useState<'נמוכה' | 'בינונית' | 'דחופה' | 'קריטית'>('בינונית');
+  const [newPriority, setNewPriority] = useState<'נמוכה' | 'בינונית' | 'גבוהה'>('בינונית');
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
   const [newProjectColorInput, setNewProjectColorInput] = useState('#2563eb');
 
   // הערות ותתי-משימות
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
   const [editingNote, setEditingNote] = useState<{ taskId: string; noteId: string; text: string } | null>(null);
-  const [newSubTaskInputs, setNewSubTaskInputs] = useState<{ [taskId: string]: string }>({});
+  const [activeSubTaskInputTaskId, setActiveSubTaskInputTaskId] = useState<string | null>(null);
+  const [subTaskText, setSubTaskText] = useState('');
 
   useEffect(() => {
     localStorage.setItem('taskly_theme', isDarkMode ? 'dark' : 'light');
@@ -168,6 +169,13 @@ export default function App() {
           completed: !!s.completed
         }));
 
+        let mappedPriority: 'נמוכה' | 'בינונית' | 'גבוהה' = 'בינונית';
+        if (data.priority === 'קריטית' || data.priority === 'דחופה' || data.priority === 'גבוהה') {
+          mappedPriority = 'גבוהה';
+        } else if (data.priority === 'נמוכה') {
+          mappedPriority = 'נמוכה';
+        }
+
         return {
           id: d.id,
           project: data.project || 'כללי',
@@ -178,7 +186,7 @@ export default function App() {
           dueDate: data.dueDate || '',
           completedDate: data.completedDate || '',
           delays: data.delays || 0,
-          priority: data.priority || 'בינונית',
+          priority: mappedPriority,
           isArchived: !!data.isArchived,
           isDeleted: !!data.isDeleted,
           status: data.status || 'פתוח',
@@ -391,22 +399,22 @@ export default function App() {
     await updateDoc(doc(db, 'tasks', taskId), { notes: updatedNotes });
   };
 
-  // תתי-משימות
-  const handleAddSubTask = async (taskId: string) => {
-    const text = newSubTaskInputs[taskId]?.trim();
-    if (!text) return;
+  // הוספת תת-משימה
+  const handleAddSubTaskDirect = async (taskId: string) => {
+    if (!subTaskText.trim()) return;
 
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
 
     const updatedSubtasks = [...(task.subtasks || []), {
       id: `sub_${Date.now()}`,
-      text,
+      text: subTaskText.trim(),
       completed: false
     }];
 
     await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
-    setNewSubTaskInputs({ ...newSubTaskInputs, [taskId]: '' });
+    setSubTaskText('');
+    setActiveSubTaskInputTaskId(null);
   };
 
   const handleToggleSubTask = async (taskId: string, subtaskId: string, currentStatus: boolean) => {
@@ -428,7 +436,6 @@ export default function App() {
     await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
   };
 
-  // שינוי סטטוס
   const handleStatusChange = async (taskId: string, newStatus: 'פתוח' | 'בביצוע' | 'הושלם') => {
     const todayStr = new Date().toISOString().split('T')[0];
     const now = new Date();
@@ -456,7 +463,6 @@ export default function App() {
     });
   };
 
-  // העברה / שחזור מארכיון
   const handleToggleArchive = async (taskId: string, currentArchived: boolean) => {
     if (userRole !== 'מנהל') return;
     await updateDoc(doc(db, 'tasks', taskId), {
@@ -464,7 +470,6 @@ export default function App() {
     });
   };
 
-  // העברת כל המשימות הסגורות לארכיון בלחיצה אחת
   const handleArchiveAllCompleted = async () => {
     if (userRole !== 'מנהל') return;
     const completedTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived && t.status === 'הושלם');
@@ -479,7 +484,6 @@ export default function App() {
     });
   };
 
-  // העברה לסל מחזור / שחזור מסל מחזור
   const handleToggleTrash = async (taskId: string, currentDeleted: boolean) => {
     if (userRole !== 'מנהל') return;
     await updateDoc(doc(db, 'tasks', taskId), {
@@ -487,14 +491,12 @@ export default function App() {
     });
   };
 
-  // מחיקה לצמיתות מסל המחזור
   const handlePermanentDelete = async (taskId: string) => {
     if (userRole !== 'מנהל') return;
     if (!window.confirm("למחוק משימה זו לצמיתות? לא ניתן יהיה לשחזר אותה.")) return;
     await deleteDoc(doc(db, 'tasks', taskId));
   };
 
-  // ריקון סל מחזור
   const handleEmptyTrash = async () => {
     if (userRole !== 'מנהל') return;
     const trashTasks = tasks.filter((t) => t.isDeleted);
@@ -516,11 +518,12 @@ export default function App() {
       return;
     }
 
-    const headers = ['פרויקט', 'נושא', 'תיאור המשימה', 'אחראי', 'עדיפות', 'תאריך פתיחה', 'תאריך יעד', 'השלמה בפועל', 'דחיות', 'סטטוס', 'תתי משימות', 'הערות'];
+    const headers = ['פרויקט', 'נושא', 'תיאור המשימה', 'תתי משימות', 'אחראי', 'עדיפות', 'תאריך פתיחה', 'תאריך יעד', 'השלמה בפועל', 'דחיות', 'סטטוס', 'הערות'];
     const rows = activeTasks.map((t) => [
       `"${t.project}"`,
       `"${t.topic}"`,
       `"${t.description.replace(/"/g, '""')}"`,
+      `"${(t.subtasks || []).map((s) => `${s.completed ? '[V]' : '[ ]'} ${s.text}`).join('; ')}"`,
       `"${t.assignee}"`,
       `"${t.priority}"`,
       `"${t.startDate}"`,
@@ -528,7 +531,6 @@ export default function App() {
       `"${t.completedDate || ''}"`,
       t.delays || 0,
       `"${t.status}"`,
-      `"${(t.subtasks || []).map((s) => `${s.completed ? '[V]' : '[ ]'} ${s.text}`).join('; ')}"`,
       `"${(t.notes || []).map((n) => `${n.author} (${n.time}): ${n.text}`).join(' | ').replace(/"/g, '""')}"`
     ]);
 
@@ -596,7 +598,8 @@ export default function App() {
     }
   };
 
-  const priorityWeights = { 'קריטית': 4, 'דחופה': 3, 'בינונית': 2, 'נמוכה': 1 };
+  // עדיפויות: גבוהה (3), בינונית (2), נמוכה (1)
+  const priorityWeights = { 'גבוהה': 3, 'בינונית': 2, 'נמוכה': 1 };
 
   const filteredTasks = useMemo(() => {
     let result = tasks.filter((t) => {
@@ -758,10 +761,10 @@ export default function App() {
 
       <div style={{ maxWidth: '1440px', margin: '0 auto' }}>
         
-        {/* Header ראשי - משתמש ותפריט בשמאל, לוגו וכפתורי פעולה בימין */}
+        {/* Header ראשי */}
         <header style={{ backgroundColor: theme.cardBg, borderRadius: '18px', padding: '16px 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', border: `1px solid ${theme.border}`, marginBottom: '20px', position: 'relative' }}>
           
-          {/* צד ימין: לוגו, כותרת, כפתורי שיתוף, ייצוא ומצב כהה */}
+          {/* ימין: לוגו וכפתורי שיתוף/ייצוא */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ width: '42px', height: '42px', backgroundColor: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px' }}>
@@ -797,7 +800,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* צד שמאל: פרופיל המשתמש עם תפריט נפתח מתחתיו (כולל סיסמה ויציאה) */}
+          {/* שמאל: פרופיל משתמש ותפריט */}
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
@@ -821,7 +824,6 @@ export default function App() {
               <span style={{ fontSize: '11px', color: theme.textMuted }}>▼</span>
             </button>
 
-            {/* תפריט נפתח מתחת למשתמש */}
             {isUserMenuOpen && (
               <div style={{
                 position: 'absolute',
@@ -890,20 +892,15 @@ export default function App() {
 
         </header>
 
-        {/* סרגל בחירת פרויקטים + כפתור פרויקט חדש + בורר טבלה/כרטיסיות */}
+        {/* סרגל בחירת פרויקטים */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.03)', marginBottom: '20px' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-            
-            {/* ימין: כותרת הפרויקטים */}
             <span style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>
               📁 בחירת פרויקטים להצגה במקביל:
             </span>
 
-            {/* שמאל: בורר כרטיסיות/טבלה + כפתור הוספת פרויקט */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              
-              {/* מתג תצוגה טבלה / כרטיסיות */}
               <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '3px', border: `1px solid ${theme.border}` }}>
                 <button
                   onClick={() => setViewMode('table')}
@@ -930,7 +927,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* תגיות פרויקטים */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
             <button
               onClick={() => setSelectedProjects([])}
@@ -995,7 +991,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* טאבים ראשיים: משימות פעילות | ארכיון | סל מחזור */}
+        {/* טאבים ראשיים */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
           
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -1048,7 +1044,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* פעולות מיוחדות לטאבים */}
           <div style={{ display: 'flex', gap: '8px' }}>
             {userRole === 'מנהל' && currentTab === 'active' && counts.completedActive > 0 && (
               <button
@@ -1098,10 +1093,9 @@ export default function App() {
             style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700', fontFamily: 'inherit' }}
           >
             <option value="הכל">כל העדיפויות</option>
-            <option value="נמוכה">נמוכה</option>
-            <option value="בינונית">בינונית</option>
-            <option value="דחופה">דחופה</option>
-            <option value="קריטית">קריטית</option>
+            <option value="גבוהה">גבוהה (אדום)</option>
+            <option value="בינונית">בינונית (כתום)</option>
+            <option value="נמוכה">נמוכה (ירוק)</option>
           </select>
 
           {userRole === 'מנהל' && currentTab === 'active' && (
@@ -1209,10 +1203,9 @@ export default function App() {
                       onChange={(e) => setEditingTask({ ...editingTask, priority: e.target.value as any })}
                       style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontFamily: 'inherit' }}
                     >
-                      <option value="נמוכה">נמוכה</option>
-                      <option value="בינונית">בינונית</option>
-                      <option value="דחופה">דחופה</option>
-                      <option value="קריטית">קריטית</option>
+                      <option value="גבוהה">גבוהה (אדום)</option>
+                      <option value="בינונית">בינונית (כתום)</option>
+                      <option value="נמוכה">נמוכה (ירוק)</option>
                     </select>
                   </div>
                 </div>
@@ -1400,10 +1393,9 @@ export default function App() {
                       onChange={(e) => setNewPriority(e.target.value as any)}
                       style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
                     >
-                      <option value="נמוכה">נמוכה</option>
-                      <option value="בינונית">בינונית</option>
-                      <option value="דחופה">דחופה</option>
-                      <option value="קריטית">קריטית</option>
+                      <option value="גבוהה">גבוהה (אדום)</option>
+                      <option value="בינונית">בינונית (כתום)</option>
+                      <option value="נמוכה">נמוכה (ירוק)</option>
                     </select>
                   </div>
                 </div>
@@ -1485,12 +1477,11 @@ export default function App() {
                   
                   /* 1. תצוגת טבלה */
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '1450px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '1300px' }}>
                       <thead>
                         <tr style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderBottom: `1.5px solid ${theme.border}`, color: theme.textMuted }}>
-                          <th style={{ padding: '14px 16px', width: '100px' }}>נושא</th>
-                          <th style={{ padding: '14px 16px' }}>תיאור המשימה</th>
-                          <th style={{ padding: '14px 16px', width: '170px' }}>צ'קליסט תתי-משימות</th>
+                          <th style={{ padding: '14px 16px', width: '110px' }}>נושא</th>
+                          <th style={{ padding: '14px 16px', minWidth: '240px' }}>תיאור המשימה</th>
                           <th style={{ padding: '14px 12px', width: '110px' }}>אחראי</th>
                           <th
                             onClick={() => handleSort('priority')}
@@ -1514,7 +1505,7 @@ export default function App() {
                           </th>
                           <th style={{ padding: '14px 10px', width: '85px', textAlign: 'center' }}>איחור</th>
                           <th style={{ padding: '14px 14px', width: '110px' }}>סטטוס</th>
-                          <th style={{ padding: '14px 16px', minWidth: '300px' }}>הערות</th>
+                          <th style={{ padding: '14px 16px', minWidth: '280px' }}>הערות</th>
                           {userRole === 'מנהל' && <th style={{ padding: '14px 12px', width: '110px', textAlign: 'center' }}>פעולות</th>}
                         </tr>
                       </thead>
@@ -1523,10 +1514,6 @@ export default function App() {
                           const delayDays = calculateDelayDays(t.dueDate, t.status, t.completedDate);
                           const dueSoon = isDueSoon(t.dueDate, t.status);
                           const isCompleted = t.status === 'הושלם';
-
-                          const completedSub = (t.subtasks || []).filter((s) => s.completed).length;
-                          const totalSub = (t.subtasks || []).length;
-                          const subProgress = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
 
                           return (
                             <tr
@@ -1548,71 +1535,95 @@ export default function App() {
                                 </span>
                               </td>
 
-                              <td style={{ padding: '14px 16px', fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
-                                {t.description}
-                                {dueSoon && (
-                                  <span style={{ marginRight: '6px', fontSize: '11px', backgroundColor: '#fef08a', color: '#854d0e', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                                    מתקרב ליעד!
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* תתי-משימות */}
+                              {/* תיאור משימה + כפתור פלוס קטן להוספת תת-משימה + רשימת תתי משימות */}
                               <td style={{ padding: '14px 16px' }}>
-                                {totalSub > 0 && (
-                                  <div style={{ marginBottom: '6px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 'bold', color: theme.textMuted, marginBottom: '2px' }}>
-                                      <span>התקדמות: {completedSub}/{totalSub}</span>
-                                      <span>{subProgress}%</span>
-                                    </div>
-                                    <div style={{ width: '100%', height: '4px', backgroundColor: theme.border, borderRadius: '2px', overflow: 'hidden' }}>
-                                      <div style={{ width: `${subProgress}%`, height: '100%', backgroundColor: subProgress === 100 ? '#16a34a' : '#2563eb' }} />
-                                    </div>
-                                  </div>
-                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                  <span style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
+                                    {t.description}
+                                  </span>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', maxHeight: '90px', overflowY: 'auto' }}>
-                                  {(t.subtasks || []).map((s) => (
-                                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', gap: '4px' }}>
-                                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', flex: 1 }}>
-                                        <input
-                                          type="checkbox"
-                                          checked={s.completed}
-                                          onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
-                                          disabled={currentTab === 'trash'}
-                                        />
-                                        <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
-                                          {s.text}
-                                        </span>
-                                      </label>
-                                      {currentTab !== 'trash' && (
-                                        <button
-                                          onClick={() => handleDeleteSubTask(t.id, s.id)}
-                                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '10px', padding: '0 2px' }}
-                                        >
-                                          ✕
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-
-                                {currentTab === 'active' && (
-                                  <div style={{ display: 'flex', gap: '3px', marginTop: '6px' }}>
-                                    <input
-                                      type="text"
-                                      value={newSubTaskInputs[t.id] || ''}
-                                      onChange={(e) => setNewSubTaskInputs({ ...newSubTaskInputs, [t.id]: e.target.value })}
-                                      placeholder="+ תת משימה..."
-                                      style={{ flex: 1, padding: '4px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px', outline: 'none', fontFamily: 'inherit' }}
-                                      onKeyDown={(e) => e.key === 'Enter' && handleAddSubTask(t.id)}
-                                    />
+                                  {/* פלוס קטן להוספת תת משימה */}
+                                  {currentTab === 'active' && (
                                     <button
-                                      onClick={() => handleAddSubTask(t.id)}
-                                      style={{ padding: '4px 8px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                                      onClick={() => {
+                                        setActiveSubTaskInputTaskId(activeSubTaskInputTaskId === t.id ? null : t.id);
+                                        setSubTaskText('');
+                                      }}
+                                      style={{
+                                        width: '20px',
+                                        height: '20px',
+                                        borderRadius: '50%',
+                                        border: `1px solid ${theme.border}`,
+                                        backgroundColor: theme.subCardBg,
+                                        color: '#2563eb',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: 'bold',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: 0
+                                      }}
+                                      title="הוסף תת-משימה"
                                     >
                                       +
                                     </button>
+                                  )}
+
+                                  {dueSoon && (
+                                    <span style={{ fontSize: '11px', backgroundColor: '#fef08a', color: '#854d0e', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                      מתקרב ליעד!
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* תיבת קלט מהירה שנפתחת בלחיצה על הפלוס */}
+                                {activeSubTaskInputTaskId === t.id && (
+                                  <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+                                    <input
+                                      type="text"
+                                      value={subTaskText}
+                                      onChange={(e) => setSubTaskText(e.target.value)}
+                                      placeholder="שם תת-המשימה..."
+                                      autoFocus
+                                      style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '12px', outline: 'none' }}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleAddSubTaskDirect(t.id)}
+                                    />
+                                    <button
+                                      onClick={() => handleAddSubTaskDirect(t.id)}
+                                      style={{ padding: '4px 10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                                    >
+                                      הוסף
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* רשימת תתי משימות תחת התיאור */}
+                                {(t.subtasks || []).length > 0 && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px', paddingRight: '4px', borderRight: `2px solid ${pColor}40` }}>
+                                    {t.subtasks.map((s) => (
+                                      <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', gap: '6px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={s.completed}
+                                            onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
+                                            disabled={currentTab === 'trash'}
+                                          />
+                                          <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
+                                            {s.text}
+                                          </span>
+                                        </label>
+                                        {currentTab !== 'trash' && (
+                                          <button
+                                            onClick={() => handleDeleteSubTask(t.id, s.id)}
+                                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '10px', opacity: 0.6 }}
+                                          >
+                                            ✕
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
                                 )}
                               </td>
@@ -1623,20 +1634,22 @@ export default function App() {
                                 </span>
                               </td>
 
+                              {/* עדיפות לפי צבעים: אדום, כתום, ירוק */}
                               <td style={{ padding: '14px 10px' }}>
                                 <span style={{
-                                  padding: '3px 8px',
-                                  borderRadius: '6px',
+                                  padding: '4px 10px',
+                                  borderRadius: '8px',
                                   fontSize: '11px',
                                   fontWeight: '800',
                                   backgroundColor:
-                                    t.priority === 'קריטית' ? '#fee2e2' :
-                                    t.priority === 'דחופה' ? '#ffedd5' :
-                                    t.priority === 'בינונית' ? '#e0f2fe' : '#f1f5f9',
+                                    t.priority === 'גבוהה' ? '#fee2e2' :
+                                    t.priority === 'בינונית' ? '#ffedd5' : '#dcfce7',
                                   color:
-                                    t.priority === 'קריטית' ? '#dc2626' :
-                                    t.priority === 'דחופה' ? '#ea580c' :
-                                    t.priority === 'בינונית' ? '#0284c7' : '#64748b'
+                                    t.priority === 'גבוהה' ? '#dc2626' :
+                                    t.priority === 'בינונית' ? '#ea580c' : '#16a34a',
+                                  border:
+                                    t.priority === 'גבוהה' ? '1px solid #fca5a5' :
+                                    t.priority === 'בינונית' ? '1px solid #fed7aa' : '1px solid #86efac'
                                 }}>
                                   {t.priority}
                                 </span>
@@ -1876,10 +1889,6 @@ export default function App() {
                       const delayDays = calculateDelayDays(t.dueDate, t.status, t.completedDate);
                       const isCompleted = t.status === 'הושלם';
 
-                      const completedSub = (t.subtasks || []).filter((s) => s.completed).length;
-                      const totalSub = (t.subtasks || []).length;
-                      const subProgress = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
-
                       return (
                         <div key={t.id} style={{ backgroundColor: isCompleted ? (isDarkMode ? '#131d2e' : '#fafafa') : theme.subCardBg, border: `1.5px solid ${theme.border}`, borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           
@@ -1889,18 +1898,19 @@ export default function App() {
                                 {t.topic}
                               </span>
                               <span style={{
-                                padding: '2px 6px',
+                                padding: '3px 8px',
                                 borderRadius: '6px',
                                 fontSize: '10px',
                                 fontWeight: '800',
                                 backgroundColor:
-                                  t.priority === 'קריטית' ? '#fee2e2' :
-                                  t.priority === 'דחופה' ? '#ffedd5' :
-                                  t.priority === 'בינונית' ? '#e0f2fe' : '#f1f5f9',
+                                  t.priority === 'גבוהה' ? '#fee2e2' :
+                                  t.priority === 'בינונית' ? '#ffedd5' : '#dcfce7',
                                 color:
-                                  t.priority === 'קריטית' ? '#dc2626' :
-                                  t.priority === 'דחופה' ? '#ea580c' :
-                                  t.priority === 'בינונית' ? '#0284c7' : '#64748b'
+                                  t.priority === 'גבוהה' ? '#dc2626' :
+                                  t.priority === 'בינונית' ? '#ea580c' : '#16a34a',
+                                border:
+                                  t.priority === 'גבוהה' ? '1px solid #fca5a5' :
+                                  t.priority === 'בינונית' ? '1px solid #fed7aa' : '1px solid #86efac'
                               }}>
                                 {t.priority}
                               </span>
@@ -1928,30 +1938,84 @@ export default function App() {
                             </select>
                           </div>
 
-                          <div style={{ fontSize: '15px', fontWeight: '700', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
-                            {t.description}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ fontSize: '15px', fontWeight: '700', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
+                              {t.description}
+                            </div>
+                            {currentTab === 'active' && (
+                              <button
+                                onClick={() => {
+                                  setActiveSubTaskInputTaskId(activeSubTaskInputTaskId === t.id ? null : t.id);
+                                  setSubTaskText('');
+                                }}
+                                style={{
+                                  width: '22px',
+                                  height: '22px',
+                                  borderRadius: '50%',
+                                  border: `1px solid ${theme.border}`,
+                                  backgroundColor: theme.cardBg,
+                                  color: '#2563eb',
+                                  cursor: 'pointer',
+                                  fontSize: '13px',
+                                  fontWeight: 'bold',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: 0
+                                }}
+                                title="הוסף תת-משימה"
+                              >
+                                +
+                              </button>
+                            )}
                           </div>
 
+                          {activeSubTaskInputTaskId === t.id && (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <input
+                                type="text"
+                                value={subTaskText}
+                                onChange={(e) => setSubTaskText(e.target.value)}
+                                placeholder="שם תת-המשימה..."
+                                autoFocus
+                                style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px', outline: 'none' }}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddSubTaskDirect(t.id)}
+                              />
+                              <button
+                                onClick={() => handleAddSubTaskDirect(t.id)}
+                                style={{ padding: '4px 10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                              >
+                                הוסף
+                              </button>
+                            </div>
+                          )}
+
                           {/* תתי משימות */}
-                          {totalSub > 0 && (
+                          {(t.subtasks || []).length > 0 && (
                             <div style={{ backgroundColor: theme.cardBg, padding: '8px 10px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: theme.textMuted, marginBottom: '4px' }}>
-                                <span>תתי-משימות: {completedSub}/{totalSub}</span>
-                                <span>{subProgress}%</span>
-                              </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                 {t.subtasks.map((s) => (
-                                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={s.completed}
-                                      onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
-                                      disabled={currentTab === 'trash'}
-                                    />
-                                    <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
-                                      {s.text}
-                                    </span>
-                                  </label>
+                                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={s.completed}
+                                        onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
+                                        disabled={currentTab === 'trash'}
+                                      />
+                                      <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
+                                        {s.text}
+                                      </span>
+                                    </label>
+                                    {currentTab !== 'trash' && (
+                                      <button
+                                        onClick={() => handleDeleteSubTask(t.id, s.id)}
+                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '10px' }}
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </div>
                                 ))}
                               </div>
                             </div>
@@ -2055,7 +2119,7 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => handleToggleTrash(t.id, t.isDeleted)}
-                                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                    style={{ padding: '4px 6px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
                                   >
                                     🗑️ סל מחזור
                                   </button>
