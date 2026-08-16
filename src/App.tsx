@@ -39,7 +39,7 @@ export default function App() {
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // 1. חיבור אנונימי ברקע
+  // 1. חיבור אנונימי מהיר ברקע
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) {
@@ -53,7 +53,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. טעינת פרויקטים עבור המשתמש
+  // 2. טעינת פרויקטים
   useEffect(() => {
     if (!user) return;
 
@@ -70,7 +70,6 @@ export default function App() {
 
       setProjects(fetchedProjects);
 
-      // הגדרת פרויקט ברירת מחדל אם קיים ואף אחד לא נבחר עדיין
       if (fetchedProjects.length > 0 && !activeProjectId) {
         setActiveProjectId(fetchedProjects[0].id);
       }
@@ -103,7 +102,7 @@ export default function App() {
     return () => unsubscribe();
   }, [user, activeProjectId]);
 
-  // יצירת פרויקט חדש
+  // הוספת פרויקט
   const handleAddProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim() || !user) return;
@@ -119,14 +118,13 @@ export default function App() {
     setIsAddingProject(false);
   };
 
-  // מחיקת פרויקט והמשימות שלו
+  // מחיקת פרויקט
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm("האם למחוק את הפרויקט וכל המשימות שבו?")) return;
 
     await deleteDoc(doc(db, 'projects', projectId));
 
-    // מחיקת משימות משויכות
     tasks.forEach(async (task) => {
       if (task.projectId === projectId) {
         await deleteDoc(doc(db, 'tasks', task.id));
@@ -141,7 +139,7 @@ export default function App() {
     }
   };
 
-  // הוספת משימה לפרויקט הנוכחי
+  // הוספת משימה
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskText.trim() || !user || !activeProjectId) return;
@@ -157,7 +155,7 @@ export default function App() {
     setNewTaskText('');
   };
 
-  // עדכון סטטוס משימה
+  // שינוי מצב משימה
   const toggleTask = async (id: string, currentCompleted: boolean) => {
     await updateDoc(doc(db, 'tasks', id), {
       completed: !currentCompleted
@@ -184,10 +182,10 @@ export default function App() {
       
       {/* כותרת ראשית */}
       <h1 style={{ textAlign: 'center', marginBottom: '20px', color: '#111', fontSize: '24px' }}>
-        ניהול פרויקטים ומשימות 📋
+        ניהול משימות ופרויקטים 📋
       </h1>
 
-      {/* סרגל גלילה אופקי של פרויקטים */}
+      {/* סרגל פרויקטים */}
       <div style={{ marginBottom: '20px' }}>
         <div style={{ 
           display: 'flex', 
@@ -213,7 +211,7 @@ export default function App() {
                   whiteSpace: 'nowrap',
                   backgroundColor: isActive ? '#0070f3' : '#f1f5f9',
                   color: isActive ? '#fff' : '#334155',
-                  fontWeight: isActive ? '600' : ' normal',
+                  fontWeight: isActive ? '600' : 'normal',
                   border: isActive ? '1px solid #0070f3' : '1px solid #e2e8f0',
                   transition: 'all 0.2s ease'
                 }}
@@ -231,7 +229,7 @@ export default function App() {
             );
           })}
 
-          {/* כפתור פתיחת הוספת פרויקט */}
+          {/* כפתור הוספת פרויקט */}
           <button
             onClick={() => setIsAddingProject(!isAddingProject)}
             style={{
@@ -260,7 +258,7 @@ export default function App() {
               type="text"
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="שם הפרויקט..."
+              placeholder="הזן שם פרויקט..."
               autoFocus
               style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none' }}
             />
@@ -283,20 +281,19 @@ export default function App() {
 
       <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '20px 0' }} />
 
-      {/* אזור המשימות של הפרויקט הנבחר */}
+      {/* אזור משימות לפרויקט הפעיל */}
       {activeProject ? (
         <div>
           <h2 style={{ fontSize: '18px', color: '#1e293b', marginBottom: '12px' }}>
             משימות עבור: <strong>{activeProject.name}</strong>
           </h2>
 
-          {/* טופס הוספת משימה תחת הפרויקט */}
           <form onSubmit={handleAddTask} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
             <input
               type="text"
               value={newTaskText}
               onChange={(e) => setNewTaskText(e.target.value)}
-              placeholder={`הוסף משימה ל-${activeProject.name}...`}
+              placeholder="הזן משימה חדשה..."
               style={{ flex: 1, padding: '10px 14px', fontSize: '15px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
             />
             <button 
@@ -307,11 +304,10 @@ export default function App() {
             </button>
           </form>
 
-          {/* רשימת המשימות */}
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {tasks.length === 0 ? (
               <li style={{ textAlign: 'center', color: '#94a3b8', padding: '24px 0' }}>
-                אין עדיין משימות בפרויקט זה. הוסף משימה ראשונה למעלה!
+                אין משימות עדיין בפרויקט זה.
               </li>
             ) : (
               tasks.map((task) => (
@@ -358,8 +354,8 @@ export default function App() {
         </div>
       ) : (
         <div style={{ textAlign: 'center', color: '#64748b', padding: '40px 0' }}>
-          <p>עדיין לא נוצר אף פרויקט.</p>
-          <p style={{ fontSize: '14px' }}>לחץ למעלה על <strong>"פרויקט חדש"</strong> כדי להתחיל!</p>
+          <p>אין כרגע פרויקט פתוח.</p>
+          <p style={{ fontSize: '14px' }}>לחץ על <strong>"פרויקט חדש"</strong> למעלה כדי להתחיל.</p>
         </div>
       )}
 
