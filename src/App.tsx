@@ -42,13 +42,11 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
   
-  // שדות התחברות
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
 
-  // סיסמת מנהל מהשרת
   const [adminPassword, setAdminPassword] = useState('1234');
   const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
   const [newAdminPasswordInput, setNewAdminPasswordInput] = useState('');
@@ -58,24 +56,18 @@ export default function App() {
   const [selectedFilterProject, setSelectedFilterProject] = useState('כל הפרויקטים');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // מודאלים
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
 
-  // משימה חדשה
   const [newProject, setNewProject] = useState('');
   const [newTopic, setNewTopic] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
   const [newDueDate, setNewDueDate] = useState('');
-
-  // פרויקט חדש
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
-  // הערות
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
 
-  // 1. חיבור אנונימי ברקע ל-Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) {
@@ -85,7 +77,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. סנכרון סיסמת מנהל מ-Firestore בזמן אמת
   useEffect(() => {
     const docRef = doc(db, 'settings', 'admin_config');
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -95,15 +86,12 @@ export default function App() {
           setAdminPassword(data.adminPassword);
         }
       } else {
-        // יצירת סיסמת ברירת מחדל אם טרם הוגדרה
-        setDoc(docRef, { adminPassword: '1234' }).catch((err) => console.error("Set default password error:", err));
+        setDoc(docRef, { adminPassword: '1234' }).catch((err) => console.error("Default pass error:", err));
       }
     });
-
     return () => unsubscribe();
   }, []);
 
-  // 3. טעינת פרויקטים
   useEffect(() => {
     const q = query(collection(db, 'projects_list'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -116,11 +104,9 @@ export default function App() {
         setNewProject(fetched[0].name);
       }
     }, (err) => console.error("Projects error:", err));
-
     return () => unsubscribe();
   }, []);
 
-  // 4. טעינת משימות
   useEffect(() => {
     const q = query(collection(db, 'tasks'), orderBy('startDate', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -130,7 +116,6 @@ export default function App() {
       }));
       setTasks(fetched);
     }, (err) => console.error("Tasks error:", err));
-
     return () => unsubscribe();
   }, []);
 
@@ -143,7 +128,6 @@ export default function App() {
       return;
     }
 
-    // בדיקת סיסמה אך ורק למנהל
     if (roleInput === 'מנהל') {
       if (passwordInput !== adminPassword) {
         setAuthError('סיסמת מנהל שגויה.');
@@ -165,7 +149,6 @@ export default function App() {
     setAuthError('');
   };
 
-  // עדכון סיסמת מנהל
   const handleUpdateAdminPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newAdminPasswordInput.trim();
@@ -272,80 +255,80 @@ export default function App() {
     });
   }, [tasks, selectedFilterProject, searchTerm]);
 
-  // מסך התחברות
+  // מסך התחברות מעוצב
   if (!currentUser) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4 font-sans text-slate-800" dir="rtl">
-        <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-2xl text-center">
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9', padding: '16px', direction: 'rtl', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div style={{ width: '100%', maxWidth: '420px', backgroundColor: '#ffffff', borderRadius: '20px', padding: '36px 28px', boxShadow: '0 10px 25px rgba(0,0,0,0.06)', border: '1px solid #e2e8f0', textAlign: 'center' }}>
           
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-3xl mx-auto mb-6 shadow-lg shadow-blue-500/30">
-            ✓
+          <div style={{ width: '56px', height: '56px', backgroundColor: '#2563eb', borderRadius: '16px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', fontSize: '26px', marginBottom: '16px' }}>
+            👤
           </div>
 
-          <h2 className="text-2xl font-black text-slate-900 mb-2">כניסה לאפליקציה</h2>
-          <p className="text-sm text-slate-500 mb-6">הזן את שמך ובחר את סוג החשבון</p>
+          <h2 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a', margin: '0 0 6px 0' }}>כניסה לאפליקציה</h2>
+          <p style={{ fontSize: '14px', color: '#64748b', margin: '0 0 24px 0' }}>הזן את שמך ובחר את סוג החשבון להתחברות</p>
 
           {authError && (
-            <div className="mb-5 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold text-right">
+            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fee2e2', color: '#dc2626', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '18px', textAlign: 'right' }}>
               ⚠️ {authError}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="text-right space-y-4">
+          <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1.5">
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                 שם מלא / שם משתמש
               </label>
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם..."
+                placeholder="הזן שם מלא..."
                 autoFocus
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-sm transition-all"
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '15px', boxSizing: 'border-box' }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1.5">
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                 סוג הרשאה
               </label>
-              <div className="flex bg-slate-100 p-1.5 rounded-xl">
+              <div style={{ display: 'flex', backgroundColor: '#f1f5f9', borderRadius: '10px', padding: '4px', gap: '4px' }}>
                 <button
                   type="button"
                   onClick={() => setRoleInput('משתמש')}
-                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${roleInput === 'משתמש' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'משתמש' ? '#ffffff' : 'transparent', color: roleInput === 'משתמש' ? '#2563eb' : '#64748b', fontWeight: '700', cursor: 'pointer', boxShadow: roleInput === 'משתמש' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none' }}
                 >
-                  משתמש (כניסה ישירה)
+                  משתמש (ישיר)
                 </button>
                 <button
                   type="button"
                   onClick={() => setRoleInput('מנהל')}
-                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${roleInput === 'מנהל' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'מנהל' ? '#ffffff' : 'transparent', color: roleInput === 'מנהל' ? '#2563eb' : '#64748b', fontWeight: '700', cursor: 'pointer', boxShadow: roleInput === 'מנהל' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none' }}
                 >
-                  מנהל (דרושה סיסמה)
+                  מנהל (סיסמה)
                 </button>
               </div>
             </div>
 
             {roleInput === 'מנהל' && (
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                   סיסמת מנהל
                 </label>
                 <input
                   type="password"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="הזן סיסמת מנהל..."
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-sm transition-all"
+                  placeholder="הזן סיסמת מנהל (ברירת מחדל: 1234)..."
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '15px', boxSizing: 'border-box' }}
                 />
               </div>
             )}
 
             <button
               type="submit"
-              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-base shadow-lg shadow-blue-600/30 transition-all mt-4"
+              style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '16px', fontWeight: '700', cursor: 'pointer', marginTop: '6px', boxShadow: '0 4px 12px rgba(37,99,235,0.25)' }}
             >
               התחבר למערכת
             </button>
@@ -357,22 +340,23 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased p-4 md:p-6" dir="rtl">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div style={{ minHeight: '100vh', backgroundColor: '#f8fafc', padding: '20px 16px', direction: 'rtl', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         
         {/* Header סרגל עליון */}
-        <header className="bg-white rounded-2xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+        <header style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '16px 20px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
           
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2.5 px-4 py-2 bg-slate-100 rounded-xl border border-slate-200">
-              <span className="font-bold text-slate-800 text-sm">👤 {currentUser}</span>
-              <span className="text-xs bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-md">{userRole}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', backgroundColor: '#f1f5f9', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <span style={{ fontWeight: '700', color: '#0f172a', fontSize: '14px' }}>👤 {currentUser}</span>
+              <span style={{ fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '6px', fontWeight: '700' }}>{userRole}</span>
             </div>
 
             {userRole === 'מנהל' && (
               <button
                 onClick={() => setShowPasswordChangeModal(true)}
-                className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
+                style={{ padding: '7px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer', color: '#334155' }}
               >
                 🔑 שינוי סיסמת מנהל
               </button>
@@ -380,18 +364,18 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="px-3.5 py-2 rounded-xl border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-bold transition-colors"
+              style={{ border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#ef4444', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}
             >
               יציאה
             </button>
           </div>
 
-          <div className="flex items-center gap-3.5">
-            <div className="text-left">
-              <h1 className="text-xl md:text-2xl font-black text-slate-900">ניהול משימות לפי פרויקטים</h1>
-              <p className="text-xs md:text-sm text-slate-500">מערכת מעקב משימות ונושאים היררכית (מחובר בזמן אמת)</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ textAlign: 'left' }}>
+              <h1 style={{ fontSize: '18px', fontWeight: '800', color: '#0f172a', margin: 0 }}>ניהול משימות לפי פרויקטים</h1>
+              <span style={{ fontSize: '12px', color: '#64748b' }}>מערכת מעקב משימות ונושאים היררכית (מחובר בזמן אמת)</span>
             </div>
-            <div className="w-11 h-11 bg-blue-600 rounded-xl flex items-center justify-center text-white text-xl shadow-md shadow-blue-500/20">
+            <div style={{ width: '40px', height: '40px', backgroundColor: '#2563eb', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px' }}>
               ⚡
             </div>
           </div>
@@ -399,11 +383,12 @@ export default function App() {
         </header>
 
         {/* סרגל חיפוש ופעולות */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '20px', alignItems: 'center' }}>
+          
           <select
             value={selectedFilterProject}
             onChange={(e) => setSelectedFilterProject(e.target.value)}
-            className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 shadow-sm"
+            style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', fontSize: '14px', outline: 'none', fontWeight: '600', color: '#334155' }}
           >
             <option value="כל הפרויקטים">כל הפרויקטים ({tasks.length})</option>
             {allProjectNames.map((p) => (
@@ -416,13 +401,13 @@ export default function App() {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="חיפוש משימה, אחראי או נושא..."
-            className="flex-1 min-w-[220px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500 shadow-sm"
+            style={{ flex: 1, minWidth: '200px', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', fontSize: '14px', outline: 'none' }}
           />
 
           {userRole === 'מנהל' && (
             <button
               onClick={() => setShowAddProjectModal(true)}
-              className="px-4 py-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all shadow-sm"
+              style={{ padding: '10px 14px', backgroundColor: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}
             >
               📁 + פרויקט חדש
             </button>
@@ -430,32 +415,32 @@ export default function App() {
 
           <button
             onClick={() => setShowAddTaskModal(true)}
-            className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm shadow-md shadow-blue-600/20 transition-all"
+            style={{ padding: '10px 18px', backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontSize: '14px', boxShadow: '0 2px 6px rgba(37,99,235,0.3)' }}
           >
             + משימה חדשה
           </button>
         </div>
 
-        {/* מודאל שינוי סיסמת מנהל */}
+        {/* מודאל שינוי סיסמה */}
         {showPasswordChangeModal && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl text-right">
-              <h3 className="text-lg font-bold text-slate-900 mb-2">שינוי סיסמת מנהל</h3>
-              <p className="text-xs text-slate-500 mb-4">הסיסמה החדשה תישמר בענן עבור כל המנהלים</p>
-              <form onSubmit={handleUpdateAdminPassword} className="space-y-4">
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '400px', textAlign: 'right' }}>
+              <h3 style={{ margin: '0 0 6px 0', fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>שינוי סיסמת מנהל</h3>
+              <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 16px 0' }}>הסיסמה החדשה תישמר בענן עבור כל המנהלים</p>
+              <form onSubmit={handleUpdateAdminPassword} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <input
                   type="text"
                   value={newAdminPasswordInput}
                   onChange={(e) => setNewAdminPasswordInput(e.target.value)}
                   placeholder="הקלד סיסמה חדשה..."
                   autoFocus
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 text-sm"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
                 />
-                <div className="flex gap-2">
-                  <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     שמור סיסמה
                   </button>
-                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-sm">
+                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} style={{ padding: '10px 14px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     ביטול
                   </button>
                 </div>
@@ -464,25 +449,25 @@ export default function App() {
           </div>
         )}
 
-        {/* מודאל פרויקט חדש */}
+        {/* מודאל יצירת פרויקט */}
         {showAddProjectModal && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl text-right">
-              <h3 className="text-lg font-bold text-slate-900 mb-4">יצירת פרויקט חדש</h3>
-              <form onSubmit={handleCreateProject} className="space-y-4">
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '400px', textAlign: 'right' }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>יצירת פרויקט חדש</h3>
+              <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <input
                   type="text"
                   value={newProjectNameInput}
                   onChange={(e) => setNewProjectNameInput(e.target.value)}
                   placeholder="שם הפרויקט..."
                   autoFocus
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 text-sm"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
                 />
-                <div className="flex gap-2">
-                  <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     צור פרויקט
                   </button>
-                  <button type="button" onClick={() => setShowAddProjectModal(false)} className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-sm">
+                  <button type="button" onClick={() => setShowAddProjectModal(false)} style={{ padding: '10px 14px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     ביטול
                   </button>
                 </div>
@@ -491,19 +476,19 @@ export default function App() {
           </div>
         )}
 
-        {/* מודאל משימה חדשה */}
+        {/* מודאל יצירת משימה */}
         {showAddTaskModal && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 md:p-8 w-full max-w-lg shadow-2xl text-right">
-              <h3 className="text-xl font-bold text-slate-900 mb-5">הוספת משימה חדשה</h3>
-              <form onSubmit={handleCreateTask} className="space-y-4">
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '480px', textAlign: 'right' }}>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>הוספת משימה חדשה</h3>
+              <form onSubmit={handleCreateTask} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1.5">פרויקט</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>פרויקט:</label>
                   <select
                     value={newProject}
                     onChange={(e) => setNewProject(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none bg-white text-sm"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', backgroundColor: '#fff', fontSize: '14px' }}
                   >
                     {allProjectNames.map((p) => (
                       <option key={p} value={p}>{p}</option>
@@ -512,54 +497,54 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1.5">נושא / תת-נושא</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>נושא / תת-נושא:</label>
                   <input
                     type="text"
                     value={newTopic}
                     onChange={(e) => setNewTopic(e.target.value)}
                     placeholder="למשל: תוכנה, חומרה, בדיקות..."
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none text-sm"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1.5">תיאור המשימה</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>תיאור המשימה:</label>
                   <textarea
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
                     placeholder="מה נדרש לבצע?"
                     rows={3}
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none text-sm resize-none"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px' }}
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">אחראי</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>אחראי:</label>
                     <input
                       type="text"
                       value={newAssignee}
                       onChange={(e) => setNewAssignee(e.target.value)}
                       placeholder="שם האחראי..."
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none text-sm"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">תאריך יעד</label>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>תאריך יעד:</label>
                     <input
                       type="date"
                       value={newDueDate}
                       onChange={(e) => setNewDueDate(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none text-sm"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
                     />
                   </div>
                 </div>
 
-                <div className="flex gap-2 pt-3">
-                  <button type="submit" className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm shadow-md">
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     שמור משימה
                   </button>
-                  <button type="button" onClick={() => setShowAddTaskModal(false)} className="px-6 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-sm">
+                  <button type="button" onClick={() => setShowAddTaskModal(false)} style={{ padding: '12px 16px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
                     ביטול
                   </button>
                 </div>
@@ -576,20 +561,20 @@ export default function App() {
             const projectDoc = projects.find((p) => p.name === projectName);
 
             return (
-              <div key={projectName} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+              <div key={projectName} style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden', marginBottom: '24px', boxShadow: '0 2px 6px rgba(0,0,0,0.03)' }}>
                 
                 {/* כותרת פרויקט */}
-                <div className="bg-slate-900 text-white px-5 py-4 flex justify-between items-center">
-                  <div className="flex items-center gap-2.5">
-                    <span className="bg-blue-600 text-white text-xs font-black px-2.5 py-1 rounded-md">פרויקט</span>
-                    <h2 className="text-base md:text-lg font-bold">{projectName}</h2>
-                    <span className="text-xs text-slate-400">({projectTasks.length} משימות)</span>
+                <div style={{ backgroundColor: '#0f172a', color: '#ffffff', padding: '12px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ backgroundColor: '#2563eb', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>פרויקט</span>
+                    <h2 style={{ fontSize: '16px', fontWeight: '700', margin: 0 }}>{projectName}</h2>
+                    <span style={{ fontSize: '12px', color: '#94a3b8' }}>({projectTasks.length} משימות)</span>
                   </div>
 
                   {projectDoc && userRole === 'מנהל' && (
                     <button
                       onClick={() => handleDeleteProject(projectDoc.id, projectDoc.name)}
-                      className="text-xs text-slate-400 hover:text-red-400 transition-colors"
+                      style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '12px' }}
                     >
                       🗑️ מחק פרויקט
                     </button>
@@ -598,59 +583,64 @@ export default function App() {
 
                 {/* טבלה */}
                 {projectTasks.length === 0 ? (
-                  <div className="p-8 text-center text-slate-400 text-sm">
+                  <div style={{ padding: '28px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
                     אין עדיין משימות בפרויקט זה.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right text-xs md:text-sm">
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '900px' }}>
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
-                          <th className="py-3.5 px-4">נושא משותף</th>
-                          <th className="py-3.5 px-4">משימה (תיאור)</th>
-                          <th className="py-3.5 px-4">אחראים</th>
-                          <th className="py-3.5 px-3">תאריך פתיחה</th>
-                          <th className="py-3.5 px-3">תאריך יעד</th>
-                          <th className="py-3.5 px-4">סטטוס</th>
-                          <th className="py-3.5 px-4 min-w-[240px]">הערות</th>
-                          <th className="py-3.5 px-3 text-center"></th>
+                        <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>
+                          <th style={{ padding: '12px 14px' }}>נושא משותף</th>
+                          <th style={{ padding: '12px 14px' }}>משימה (תיאור)</th>
+                          <th style={{ padding: '12px 14px' }}>אחראים</th>
+                          <th style={{ padding: '12px 12px' }}>תאריך פתיחה</th>
+                          <th style={{ padding: '12px 12px' }}>תאריך יעד</th>
+                          <th style={{ padding: '12px 14px' }}>סטטוס</th>
+                          <th style={{ padding: '12px 14px', minWidth: '220px' }}>הערות</th>
+                          <th style={{ padding: '12px 10px', textAlign: 'center' }}></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody>
                         {projectTasks.map((t) => (
-                          <tr key={t.id} className="hover:bg-slate-50/60 transition-colors">
+                          <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             
-                            <td className="py-3.5 px-4 font-bold text-blue-600">
+                            <td style={{ padding: '12px 14px', fontWeight: '700', color: '#2563eb' }}>
                               {t.topic}
                             </td>
 
-                            <td className="py-3.5 px-4 font-semibold text-slate-800">
+                            <td style={{ padding: '12px 14px', fontWeight: '500', color: '#0f172a' }}>
                               {t.description}
                             </td>
 
-                            <td className="py-3.5 px-4">
-                              <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                            <td style={{ padding: '12px 14px' }}>
+                              <span style={{ backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', color: '#334155' }}>
                                 👤 {t.assignee}
                               </span>
                             </td>
 
-                            <td className="py-3.5 px-3 text-slate-500 text-xs">
+                            <td style={{ padding: '12px 12px', color: '#64748b', fontSize: '12px' }}>
                               {t.startDate}
                             </td>
 
-                            <td className="py-3.5 px-3 text-slate-700 font-semibold text-xs">
+                            <td style={{ padding: '12px 12px', color: '#0f172a', fontWeight: '600', fontSize: '12px' }}>
                               📅 {t.dueDate}
                             </td>
 
-                            <td className="py-3.5 px-4">
+                            <td style={{ padding: '12px 14px' }}>
                               <select
                                 value={t.status}
                                 onChange={(e) => handleStatusChange(t.id, e.target.value as any)}
-                                className={`text-xs font-bold px-2.5 py-1.5 rounded-lg border-0 outline-none cursor-pointer ${
-                                  t.status === 'הושלם' ? 'bg-green-100 text-green-800' :
-                                  t.status === 'בביצוע' ? 'bg-amber-100 text-amber-800' :
-                                  'bg-blue-100 text-blue-800'
-                                }`}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  border: 'none',
+                                  fontSize: '12px',
+                                  fontWeight: '700',
+                                  cursor: 'pointer',
+                                  backgroundColor: t.status === 'הושלם' ? '#dcfce7' : t.status === 'בביצוע' ? '#fef9c3' : '#e0f2fe',
+                                  color: t.status === 'הושלם' ? '#166534' : t.status === 'בביצוע' ? '#854d0e' : '#0369a1'
+                                }}
                               >
                                 <option value="פתוח">פתוח</option>
                                 <option value="בביצוע">בביצוע</option>
@@ -658,38 +648,38 @@ export default function App() {
                               </select>
                             </td>
 
-                            <td className="py-3.5 px-4">
-                              <div className="max-h-20 overflow-y-auto space-y-1 mb-2">
+                            <td style={{ padding: '12px 14px' }}>
+                              <div style={{ maxHeight: '70px', overflowY: 'auto', marginBottom: '6px' }}>
                                 {(t.notes || []).map((n, idx) => (
-                                  <div key={idx} className="text-xs bg-slate-50 border border-slate-200 rounded p-1.5">
-                                    <span className="font-bold text-slate-700">{n.author}: </span>
-                                    <span className="text-slate-600">{n.text}</span>
+                                  <div key={idx} style={{ fontSize: '11px', backgroundColor: '#f8fafc', padding: '4px 6px', borderRadius: '4px', marginBottom: '4px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontWeight: '700', color: '#334155' }}>{n.author}: </span>
+                                    <span>{n.text}</span>
                                   </div>
                                 ))}
                               </div>
 
-                              <div className="flex gap-1">
+                              <div style={{ display: 'flex', gap: '4px' }}>
                                 <input
                                   type="text"
                                   value={noteInputs[t.id] || ''}
                                   onChange={(e) => setNoteInputs({ ...noteInputs, [t.id]: e.target.value })}
                                   placeholder="הוסף הערה..."
-                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-200 rounded text-xs outline-none focus:border-blue-500"
+                                  style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12px', outline: 'none' }}
                                 />
                                 <button
                                   onClick={() => handleAddNote(t.id)}
-                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded transition-colors"
+                                  style={{ padding: '4px 10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}
                                 >
                                   שלח
                                 </button>
                               </div>
                             </td>
 
-                            <td className="py-3.5 px-3 text-center">
+                            <td style={{ padding: '12px 10px', textAlign: 'center' }}>
                               {userRole === 'מנהל' && (
                                 <button
                                   onClick={() => handleDeleteTask(t.id)}
-                                  className="text-slate-400 hover:text-red-500 font-bold p-1 transition-colors"
+                                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}
                                   title="מחק משימה"
                                 >
                                   ✕
