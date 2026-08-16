@@ -21,6 +21,12 @@ interface NoteItem {
   time: string;
 }
 
+interface SubTask {
+  id: string;
+  text: string;
+  completed: boolean;
+}
+
 interface Task {
   id: string;
   project: string;
@@ -33,14 +39,19 @@ interface Task {
   delays: number;
   priority: 'נמוכה' | 'בינונית' | 'דחופה' | 'קריטית';
   isArchived: boolean;
+  isDeleted: boolean; // סל מחזור
   status: 'פתוח' | 'בביצוע' | 'הושלם';
   notes: NoteItem[];
+  subtasks: SubTask[];
 }
 
 interface ProjectDoc {
   id: string;
   name: string;
+  color?: string;
 }
+
+const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
@@ -52,6 +63,7 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   // סיסמת מנהל
   const [adminPassword, setAdminPassword] = useState('1234');
@@ -61,13 +73,15 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
-  // תצוגה וסינון
+  // תצוגה וסינון: 'active' | 'archived' | 'trash'
+  const [currentTab, setCurrentTab] = useState<'active' | 'archived' | 'trash'>('active');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('הכל');
   const [priorityFilter, setPriorityFilter] = useState<string>('הכל');
-  const [showArchivedView, setShowArchivedView] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'delays' | 'none'>('none');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // מודאלים
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
@@ -75,6 +89,7 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [editingProject, setEditingProject] = useState<ProjectDoc | null>(null);
   const [editingProjectNewName, setEditingProjectNewName] = useState('');
+  const [editingProjectNewColor, setEditingProjectNewColor] = useState('#2563eb');
 
   // משימה חדשה
   const [newProject, setNewProject] = useState('');
@@ -84,17 +99,17 @@ export default function App() {
   const [newDueDate, setNewDueDate] = useState('');
   const [newPriority, setNewPriority] = useState<'נמוכה' | 'בינונית' | 'דחופה' | 'קריטית'>('בינונית');
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
+  const [newProjectColorInput, setNewProjectColorInput] = useState('#2563eb');
 
-  // הערות
+  // הערות ותתי-משימות
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
   const [editingNote, setEditingNote] = useState<{ taskId: string; noteId: string; text: string } | null>(null);
+  const [newSubTaskInputs, setNewSubTaskInputs] = useState<{ [taskId: string]: string }>({});
 
-  // ערכת נושא
   useEffect(() => {
     localStorage.setItem('taskly_theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
-  // חיבור אנונימי
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) {
@@ -104,7 +119,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // סנכרון סיסמת מנהל
   useEffect(() => {
     const docRef = doc(db, 'settings', 'admin_config');
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -120,13 +134,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // טעינת פרויקטים
   useEffect(() => {
     const q = query(collection(db, 'projects_list'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetched = snapshot.docs.map((d) => ({
         id: d.id,
-        name: d.data().name as string
+        name: d.data().name as string,
+        color: d.data().color || '#2563eb'
       }));
       setProjects(fetched);
       if (fetched.length > 0 && !newProject) {
@@ -136,7 +150,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // טעינת משימות
   useEffect(() => {
     const q = query(collection(db, 'tasks'), orderBy('startDate', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -147,6 +160,12 @@ export default function App() {
           text: n.text || '',
           author: n.author || 'אורח',
           time: n.time || ''
+        }));
+
+        const subtasksWithId = (data.subtasks || []).map((s: any, idx: number) => ({
+          id: s.id || `sub_${idx}_${Date.now()}`,
+          text: s.text || '',
+          completed: !!s.completed
         }));
 
         return {
@@ -160,9 +179,11 @@ export default function App() {
           completedDate: data.completedDate || '',
           delays: data.delays || 0,
           priority: data.priority || 'בינונית',
-          isArchived: data.isArchived || false,
+          isArchived: !!data.isArchived,
+          isDeleted: !!data.isDeleted,
           status: data.status || 'פתוח',
-          notes: notesWithId
+          notes: notesWithId,
+          subtasks: subtasksWithId
         };
       });
       setTasks(fetched);
@@ -170,7 +191,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // חישוב ימי איחור
   const calculateDelayDays = (dueDate: string, status: string, completedDate?: string) => {
     if (!dueDate) return 0;
     const due = new Date(dueDate).getTime();
@@ -179,7 +199,6 @@ export default function App() {
     return diffDays > 0 ? diffDays : 0;
   };
 
-  // בדיקת יעד קרוב (היום או מחר)
   const isDueSoon = (dueDate: string, status: string) => {
     if (!dueDate || status === 'הושלם') return false;
     const due = new Date(dueDate).getTime();
@@ -216,6 +235,7 @@ export default function App() {
     setCurrentUser(null);
     setPasswordInput('');
     setAuthError('');
+    setIsUserMenuOpen(false);
   };
 
   const handleUpdateAdminPassword = async (e: React.FormEvent) => {
@@ -237,6 +257,7 @@ export default function App() {
 
     await addDoc(collection(db, 'projects_list'), {
       name: trimmed,
+      color: newProjectColorInput,
       createdAt: serverTimestamp()
     });
 
@@ -252,10 +273,11 @@ export default function App() {
     const oldName = editingProject.name;
     const newName = editingProjectNewName.trim();
 
-    // עדכון שם הפרויקט בטבלת הפרויקטים
-    await updateDoc(doc(db, 'projects_list', editingProject.id), { name: newName });
+    await updateDoc(doc(db, 'projects_list', editingProject.id), {
+      name: newName,
+      color: editingProjectNewColor
+    });
 
-    // עדכון כל המשימות השייכות לפרויקט הישן
     tasks.forEach(async (t) => {
       if (t.project === oldName) {
         await updateDoc(doc(db, 'tasks', t.id), { project: newName });
@@ -289,8 +311,10 @@ export default function App() {
       delays: 0,
       priority: newPriority,
       isArchived: false,
+      isDeleted: false,
       status: 'פתוח',
       notes: [],
+      subtasks: [],
       createdAt: serverTimestamp()
     });
 
@@ -320,7 +344,6 @@ export default function App() {
     setEditingTask(null);
   };
 
-  // הוספת הערה
   const handleAddNote = async (taskId: string) => {
     const text = noteInputs[taskId]?.trim();
     if (!text) return;
@@ -344,7 +367,6 @@ export default function App() {
     setNoteInputs({ ...noteInputs, [taskId]: '' });
   };
 
-  // עריכת הערה
   const handleSaveEditedNote = async () => {
     if (!editingNote || !editingNote.text.trim()) return;
 
@@ -359,7 +381,6 @@ export default function App() {
     setEditingNote(null);
   };
 
-  // מחיקת הערה
   const handleDeleteNote = async (taskId: string, noteId: string) => {
     if (!window.confirm("למחוק הערה זו?")) return;
 
@@ -370,12 +391,61 @@ export default function App() {
     await updateDoc(doc(db, 'tasks', taskId), { notes: updatedNotes });
   };
 
+  // תתי-משימות
+  const handleAddSubTask = async (taskId: string) => {
+    const text = newSubTaskInputs[taskId]?.trim();
+    if (!text) return;
+
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const updatedSubtasks = [...(task.subtasks || []), {
+      id: `sub_${Date.now()}`,
+      text,
+      completed: false
+    }];
+
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
+    setNewSubTaskInputs({ ...newSubTaskInputs, [taskId]: '' });
+  };
+
+  const handleToggleSubTask = async (taskId: string, subtaskId: string, currentStatus: boolean) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const updatedSubtasks = (task.subtasks || []).map((s) =>
+      s.id === subtaskId ? { ...s, completed: !currentStatus } : s
+    );
+
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
+  };
+
+  const handleDeleteSubTask = async (taskId: string, subtaskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const updatedSubtasks = (task.subtasks || []).filter((s) => s.id !== subtaskId);
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
+  };
+
   // שינוי סטטוס
   const handleStatusChange = async (taskId: string, newStatus: 'פתוח' | 'בביצוע' | 'הושלם') => {
     const todayStr = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const formattedDate = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+    
+    const task = tasks.find((t) => t.id === taskId);
+    const auditNote: NoteItem = {
+      id: `audit_${Date.now()}`,
+      text: `🔄 הסטטוס שונה ל-"${newStatus}" על ידי ${currentUser}`,
+      author: 'מערכת',
+      time: formattedDate
+    };
+
     await updateDoc(doc(db, 'tasks', taskId), {
       status: newStatus,
-      completedDate: newStatus === 'הושלם' ? todayStr : ''
+      completedDate: newStatus === 'הושלם' ? todayStr : '',
+      notes: [...(task?.notes || []), auditNote]
     });
   };
 
@@ -386,6 +456,7 @@ export default function App() {
     });
   };
 
+  // העברה / שחזור מארכיון
   const handleToggleArchive = async (taskId: string, currentArchived: boolean) => {
     if (userRole !== 'מנהל') return;
     await updateDoc(doc(db, 'tasks', taskId), {
@@ -393,21 +464,59 @@ export default function App() {
     });
   };
 
-  const handleDeleteTask = async (taskId: string) => {
+  // העברת כל המשימות הסגורות לארכיון בלחיצה אחת
+  const handleArchiveAllCompleted = async () => {
     if (userRole !== 'מנהל') return;
-    if (!window.confirm("למחוק משימה זו לצמיתות?")) return;
+    const completedTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived && t.status === 'הושלם');
+    if (completedTasks.length === 0) {
+      alert("אין משימות שהושלמו להעברה לארכיון.");
+      return;
+    }
+
+    if (!window.confirm(`האם להעביר ${completedTasks.length} משימות שהושלמו לארכיון?`)) return;
+    completedTasks.forEach(async (t) => {
+      await updateDoc(doc(db, 'tasks', t.id), { isArchived: true });
+    });
+  };
+
+  // העברה לסל מחזור / שחזור מסל מחזור
+  const handleToggleTrash = async (taskId: string, currentDeleted: boolean) => {
+    if (userRole !== 'מנהל') return;
+    await updateDoc(doc(db, 'tasks', taskId), {
+      isDeleted: !currentDeleted
+    });
+  };
+
+  // מחיקה לצמיתות מסל המחזור
+  const handlePermanentDelete = async (taskId: string) => {
+    if (userRole !== 'מנהל') return;
+    if (!window.confirm("למחוק משימה זו לצמיתות? לא ניתן יהיה לשחזר אותה.")) return;
     await deleteDoc(doc(db, 'tasks', taskId));
   };
 
-  // ייצוא לקובץ Excel (CSV עם UTF-8 BOM)
+  // ריקון סל מחזור
+  const handleEmptyTrash = async () => {
+    if (userRole !== 'מנהל') return;
+    const trashTasks = tasks.filter((t) => t.isDeleted);
+    if (trashTasks.length === 0) {
+      alert("סל המחזור ריק.");
+      return;
+    }
+
+    if (!window.confirm(`האם לרוקן את סל המחזור ולמחוק לצמיתות ${trashTasks.length} משימות?`)) return;
+    trashTasks.forEach(async (t) => {
+      await deleteDoc(doc(db, 'tasks', t.id));
+    });
+  };
+
   const handleExportCSV = () => {
-    const activeTasks = tasks.filter((t) => (showArchivedView ? t.isArchived : !t.isArchived));
+    const activeTasks = tasks.filter((t) => !t.isDeleted && (currentTab === 'archived' ? t.isArchived : !t.isArchived));
     if (activeTasks.length === 0) {
       alert("אין נתונים לייצוא.");
       return;
     }
 
-    const headers = ['פרויקט', 'נושא', 'תיאור המשימה', 'אחראי', 'עדיפות', 'תאריך פתיחה', 'תאריך יעד', 'השלמה בפועל', 'דחיות', 'סטטוס', 'הערות'];
+    const headers = ['פרויקט', 'נושא', 'תיאור המשימה', 'אחראי', 'עדיפות', 'תאריך פתיחה', 'תאריך יעד', 'השלמה בפועל', 'דחיות', 'סטטוס', 'תתי משימות', 'הערות'];
     const rows = activeTasks.map((t) => [
       `"${t.project}"`,
       `"${t.topic}"`,
@@ -419,6 +528,7 @@ export default function App() {
       `"${t.completedDate || ''}"`,
       t.delays || 0,
       `"${t.status}"`,
+      `"${(t.subtasks || []).map((s) => `${s.completed ? '[V]' : '[ ]'} ${s.text}`).join('; ')}"`,
       `"${(t.notes || []).map((n) => `${n.author} (${n.time}): ${n.text}`).join(' | ').replace(/"/g, '""')}"`
     ]);
 
@@ -433,9 +543,9 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // שיתוף בוואטסאפ
   const handleShareWhatsApp = (projectName?: string) => {
     const relevant = tasks.filter((t) =>
+      !t.isDeleted &&
       !t.isArchived &&
       (projectName ? t.project === projectName : selectedProjects.length === 0 || selectedProjects.includes(t.project))
     );
@@ -450,7 +560,11 @@ export default function App() {
 
     relevant.forEach((t, idx) => {
       text += `${idx + 1}. *[${t.project}]* ${t.topic} - ${t.description}\n`;
-      text += `   👤 אחראי: ${t.assignee} | 📅 יעד: ${t.dueDate} | סטטוס: ${t.status}\n`;
+      text += `   👤 אחראי: ${t.assignee} | 📅 יעד: ${t.dueDate} | עדיפות: ${t.priority} | סטטוס: ${t.status}\n`;
+      if (t.subtasks && t.subtasks.length > 0) {
+        const completedCount = t.subtasks.filter((s) => s.completed).length;
+        text += `   ☑️ תתי-משימות: ${completedCount}/${t.subtasks.length} הושלמו\n`;
+      }
       if (t.notes && t.notes.length > 0) {
         text += `   💬 הערה אחרונה: ${t.notes[t.notes.length - 1].text}\n`;
       }
@@ -458,7 +572,7 @@ export default function App() {
     });
 
     const encoded = encodeURIComponent(text);
-    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+    window.open(`https://wa.me/?text=${encoded}`, '_blank');
   };
 
   const allProjectNames = useMemo(() => {
@@ -473,9 +587,28 @@ export default function App() {
     }
   };
 
+  const handleSort = (column: 'dueDate' | 'priority' | 'delays') => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortOrder('asc');
+    }
+  };
+
+  const priorityWeights = { 'קריטית': 4, 'דחופה': 3, 'בינונית': 2, 'נמוכה': 1 };
+
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      const matchArchive = showArchivedView ? t.isArchived : !t.isArchived;
+    let result = tasks.filter((t) => {
+      let matchTab = false;
+      if (currentTab === 'trash') {
+        matchTab = t.isDeleted;
+      } else if (currentTab === 'archived') {
+        matchTab = !t.isDeleted && t.isArchived;
+      } else {
+        matchTab = !t.isDeleted && !t.isArchived;
+      }
+
       const matchProject = selectedProjects.length === 0 || selectedProjects.includes(t.project);
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
       const matchPriority = priorityFilter === 'הכל' || t.priority === priorityFilter;
@@ -483,18 +616,50 @@ export default function App() {
         t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         t.topic.toLowerCase().includes(searchTerm.toLowerCase()) ||
         t.assignee.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchArchive && matchProject && matchStatus && matchPriority && matchSearch;
+      return matchTab && matchProject && matchStatus && matchPriority && matchSearch;
     });
-  }, [tasks, showArchivedView, selectedProjects, statusFilter, priorityFilter, searchTerm]);
 
-  // סגנונות Theme דינמיים
+    if (sortBy !== 'none') {
+      result.sort((a, b) => {
+        if (sortBy === 'dueDate') {
+          const timeA = new Date(a.dueDate).getTime() || 0;
+          const timeB = new Date(b.dueDate).getTime() || 0;
+          return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+        }
+        if (sortBy === 'priority') {
+          const pA = priorityWeights[a.priority] || 0;
+          const pB = priorityWeights[b.priority] || 0;
+          return sortOrder === 'asc' ? pA - pB : pB - pA;
+        }
+        if (sortBy === 'delays') {
+          return sortOrder === 'asc' ? (a.delays || 0) - (b.delays || 0) : (b.delays || 0) - (a.delays || 0);
+        }
+        return 0;
+      });
+    }
+
+    return result;
+  }, [tasks, currentTab, selectedProjects, statusFilter, priorityFilter, searchTerm, sortBy, sortOrder]);
+
+  const getProjectColor = (pName: string) => {
+    const p = projects.find((x) => x.name === pName);
+    return p?.color || '#2563eb';
+  };
+
+  const counts = useMemo(() => {
+    const active = tasks.filter((t) => !t.isDeleted && !t.isArchived).length;
+    const archived = tasks.filter((t) => !t.isDeleted && t.isArchived).length;
+    const trash = tasks.filter((t) => t.isDeleted).length;
+    const completedActive = tasks.filter((t) => !t.isDeleted && !t.isArchived && t.status === 'הושלם').length;
+    return { active, archived, trash, completedActive };
+  }, [tasks]);
+
   const theme = {
     bg: isDarkMode ? '#090d16' : '#f8fafc',
     cardBg: isDarkMode ? '#111827' : '#ffffff',
     textMain: isDarkMode ? '#f9fafb' : '#0f172a',
     textMuted: isDarkMode ? '#9ca3af' : '#64748b',
     border: isDarkMode ? '#1f2937' : '#e2e8f0',
-    headerBg: isDarkMode ? '#0f172a' : '#ffffff',
     subCardBg: isDarkMode ? '#1e293b' : '#f8fafc',
     inputBg: isDarkMode ? '#1f2937' : '#ffffff',
     inputText: isDarkMode ? '#ffffff' : '#0f172a'
@@ -503,18 +668,20 @@ export default function App() {
   // מסך התחברות
   if (!currentUser) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#090d16', padding: '20px', direction: 'rtl', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#090d16', padding: '20px', direction: 'rtl', fontFamily: "'Heebo', system-ui, -apple-system, sans-serif" }}>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&display=swap" />
+        
         <div style={{ width: '100%', maxWidth: '420px', backgroundColor: '#111827', borderRadius: '24px', padding: '36px 28px', border: '1px solid #1f2937', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)', textAlign: 'center' }}>
           
           <div style={{ width: '60px', height: '60px', backgroundColor: '#2563eb', borderRadius: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', fontSize: '26px', marginBottom: '16px', boxShadow: '0 8px 20px -4px rgba(37,99,235,0.5)' }}>
             ✓
           </div>
 
-          <h2 style={{ fontSize: '24px', fontWeight: '900', color: '#f9fafb', margin: '0 0 6px 0' }}>כניסה למערכת</h2>
-          <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 24px 0' }}>ניהול ומעקב משימות ופרויקטים</p>
+          <h2 style={{ fontSize: '25px', fontWeight: '900', color: '#f9fafb', margin: '0 0 6px 0', letterSpacing: '-0.3px' }}>כניסה למערכת</h2>
+          <p style={{ fontSize: '14px', color: '#9ca3af', margin: '0 0 24px 0', fontWeight: '500' }}>ניהול ומעקב משימות ופרויקטים</p>
 
           {authError && (
-            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>
+            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>
               ⚠️ {authError}
             </div>
           )}
@@ -530,7 +697,7 @@ export default function App() {
                 onChange={(e) => setNameInput(e.target.value)}
                 placeholder="הזן את שמך..."
                 autoFocus
-                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #374151', backgroundColor: '#1f2937', color: '#ffffff', outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #374151', backgroundColor: '#1f2937', color: '#ffffff', outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
             </div>
 
@@ -542,16 +709,16 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setRoleInput('משתמש')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'משתמש' ? '#2563eb' : 'transparent', color: roleInput === 'משתמש' ? '#ffffff' : '#9ca3af', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'משתמש' ? '#2563eb' : 'transparent', color: roleInput === 'משתמש' ? '#ffffff' : '#9ca3af', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s', fontFamily: 'inherit' }}
                 >
-                  משתמש (צפייה + הערות)
+                  משתמש
                 </button>
                 <button
                   type="button"
                   onClick={() => setRoleInput('מנהל')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : '#9ca3af', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : '#9ca3af', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s', fontFamily: 'inherit' }}
                 >
-                  מנהל (שליטה מלאה)
+                  מנהל
                 </button>
               </div>
             </div>
@@ -566,14 +733,14 @@ export default function App() {
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="הזן סיסמה..."
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #374151', backgroundColor: '#1f2937', color: '#ffffff', outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #374151', backgroundColor: '#1f2937', color: '#ffffff', outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
               </div>
             )}
 
             <button
               type="submit"
-              style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '15px', fontWeight: '800', cursor: 'pointer', marginTop: '4px', boxShadow: '0 4px 12px rgba(37,99,235,0.4)' }}
+              style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '15px', fontWeight: '800', cursor: 'pointer', marginTop: '4px', boxShadow: '0 4px 12px rgba(37,99,235,0.4)', fontFamily: 'inherit' }}
             >
               התחבר למערכת
             </button>
@@ -585,106 +752,185 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: theme.bg, color: theme.textMain, padding: '24px 16px', direction: 'rtl', fontFamily: 'system-ui, -apple-system, sans-serif', transition: 'background-color 0.2s' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: theme.bg, color: theme.textMain, padding: '24px 16px', direction: 'rtl', fontFamily: "'Heebo', system-ui, -apple-system, sans-serif", transition: 'background-color 0.2s' }}>
       
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&display=swap" />
+
       <div style={{ maxWidth: '1440px', margin: '0 auto' }}>
         
-        {/* Header ראשי */}
-        <header style={{ backgroundColor: theme.cardBg, borderRadius: '18px', padding: '16px 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', border: `1px solid ${theme.border}`, marginBottom: '20px' }}>
+        {/* Header ראשי - משתמש ותפריט בשמאל, לוגו וכפתורי פעולה בימין */}
+        <header style={{ backgroundColor: theme.cardBg, borderRadius: '18px', padding: '16px 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', border: `1px solid ${theme.border}`, marginBottom: '20px', position: 'relative' }}>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', backgroundColor: theme.subCardBg, borderRadius: '10px', border: `1px solid ${theme.border}` }}>
+          {/* צד ימין: לוגו, כותרת, כפתורי שיתוף, ייצוא ומצב כהה */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '42px', height: '42px', backgroundColor: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px' }}>
+                ⚡
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <h1 style={{ fontSize: '21px', fontWeight: '900', color: theme.textMain, margin: 0, letterSpacing: '-0.3px' }}>Taskly Pro</h1>
+                <span style={{ fontSize: '13px', color: theme.textMuted, fontWeight: '500' }}>ניהול ומעקב משימות</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                onClick={() => setIsDarkMode(!isDarkMode)}
+                style={{ padding: '8px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                {isDarkMode ? '☀️ בהיר' : '🌙 כהה'}
+              </button>
+
+              <button
+                onClick={handleExportCSV}
+                style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #10b981', backgroundColor: isDarkMode ? '#064e3b' : '#ecfdf5', color: '#10b981', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                📊 ייצוא Excel
+              </button>
+
+              <button
+                onClick={() => handleShareWhatsApp()}
+                style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #25d366', backgroundColor: isDarkMode ? '#064e3b' : '#f0fdf4', color: '#16a34a', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                💬 WhatsApp
+              </button>
+            </div>
+          </div>
+
+          {/* צד שמאל: פרופיל המשתמש עם תפריט נפתח מתחתיו (כולל סיסמה ויציאה) */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 16px',
+                backgroundColor: theme.subCardBg,
+                borderRadius: '12px',
+                border: `1px solid ${theme.border}`,
+                cursor: 'pointer',
+                fontFamily: 'inherit'
+              }}
+            >
               <div style={{ width: '8px', height: '8px', backgroundColor: '#22c55e', borderRadius: '50%' }} />
               <span style={{ fontWeight: '800', color: theme.textMain, fontSize: '14px' }}>{currentUser}</span>
               <span style={{ fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>
-                {userRole === 'מנהל' ? 'מנהל מערכת' : 'משתמש'}
+                {userRole === 'מנהל' ? 'מנהל' : 'משתמש'}
               </span>
-            </div>
-
-            {/* מתג Dark / Light Mode */}
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              style={{ padding: '8px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
-              title="החלף מצב תצוגה"
-            >
-              {isDarkMode ? '☀️ בהיר' : '🌙 כהה'}
+              <span style={{ fontSize: '11px', color: theme.textMuted }}>▼</span>
             </button>
 
-            {/* ייצוא לאקסל */}
-            <button
-              onClick={handleExportCSV}
-              style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #10b981', backgroundColor: isDarkMode ? '#064e3b' : '#ecfdf5', color: '#10b981', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
-              title="ייצא משימות לקובץ CSV"
-            >
-              📊 ייצוא Excel
-            </button>
+            {/* תפריט נפתח מתחת למשתמש */}
+            {isUserMenuOpen && (
+              <div style={{
+                position: 'absolute',
+                left: 0,
+                top: '115%',
+                width: '180px',
+                backgroundColor: theme.cardBg,
+                borderRadius: '12px',
+                border: `1px solid ${theme.border}`,
+                boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+                padding: '6px',
+                zIndex: 100,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px'
+              }}>
+                {userRole === 'מנהל' && (
+                  <button
+                    onClick={() => { setIsUserMenuOpen(false); setShowPasswordChangeModal(true); }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: theme.textMain,
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      textAlign: 'right',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <span>🔑</span>
+                    <span>שינוי סיסמת מנהל</span>
+                  </button>
+                )}
 
-            {/* שיתוף בוואטסאפ */}
-            <button
-              onClick={() => handleShareWhatsApp()}
-              style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #25d366', backgroundColor: isDarkMode ? '#064e3b' : '#f0fdf4', color: '#16a34a', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}
-              title="שתף סיכום בוואטסאפ"
-            >
-              💬 שתף WhatsApp
-            </button>
-
-            {userRole === 'מנהל' && (
-              <button
-                onClick={() => setShowPasswordChangeModal(true)}
-                style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, fontSize: '13px', fontWeight: '700', cursor: 'pointer', color: theme.textMuted }}
-              >
-                🔑 סיסמת מנהל
-              </button>
+                <button
+                  onClick={handleLogout}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    color: '#ef4444',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    textAlign: 'right',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    borderTop: `1px solid ${theme.border}`
+                  }}
+                >
+                  <span>🚪</span>
+                  <span>יציאה מהמערכת</span>
+                </button>
+              </div>
             )}
-
-            <button
-              onClick={handleLogout}
-              style={{ border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#ef4444', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: '700' }}
-            >
-              יציאה
-            </button>
-          </div>
-
-          {/* כפתורי מעבר תצוגה */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '4px', border: `1px solid ${theme.border}` }}>
-              <button
-                onClick={() => setViewMode('table')}
-                style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: viewMode === 'table' ? '#2563eb' : 'transparent', color: viewMode === 'table' ? '#ffffff' : theme.textMuted, fontWeight: '800', cursor: 'pointer', fontSize: '13px', transition: 'all 0.15s' }}
-              >
-                📊 טבלה
-              </button>
-              <button
-                onClick={() => setViewMode('cards')}
-                style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: viewMode === 'cards' ? '#2563eb' : 'transparent', color: viewMode === 'cards' ? '#ffffff' : theme.textMuted, fontWeight: '800', cursor: 'pointer', fontSize: '13px', transition: 'all 0.15s' }}
-              >
-                🗂️ כרטיסיות
-              </button>
-            </div>
-
-            <div style={{ width: '42px', height: '42px', backgroundColor: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px' }}>
-              ⚡
-            </div>
           </div>
 
         </header>
 
-        {/* סרגל בחירת מספר פרויקטים + עריכת שמות פרויקטים */}
+        {/* סרגל בחירת פרויקטים + כפתור פרויקט חדש + בורר טבלה/כרטיסיות */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.03)', marginBottom: '20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-            <span style={{ fontSize: '13px', fontWeight: '800', color: theme.textMain }}>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+            
+            {/* ימין: כותרת הפרויקטים */}
+            <span style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>
               📁 בחירת פרויקטים להצגה במקביל:
             </span>
-            {userRole === 'מנהל' && (
-              <button
-                onClick={() => setShowAddProjectModal(true)}
-                style={{ padding: '7px 16px', backgroundColor: '#2563eb', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '800', color: '#ffffff', cursor: 'pointer' }}
-              >
-                + פרויקט חדש
-              </button>
-            )}
+
+            {/* שמאל: בורר כרטיסיות/טבלה + כפתור הוספת פרויקט */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              
+              {/* מתג תצוגה טבלה / כרטיסיות */}
+              <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '3px', border: `1px solid ${theme.border}` }}>
+                <button
+                  onClick={() => setViewMode('table')}
+                  style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: viewMode === 'table' ? '#2563eb' : 'transparent', color: viewMode === 'table' ? '#ffffff' : theme.textMuted, fontWeight: '800', cursor: 'pointer', fontSize: '13px', transition: 'all 0.15s', fontFamily: 'inherit' }}
+                >
+                  📊 טבלה
+                </button>
+                <button
+                  onClick={() => setViewMode('cards')}
+                  style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: viewMode === 'cards' ? '#2563eb' : 'transparent', color: viewMode === 'cards' ? '#ffffff' : theme.textMuted, fontWeight: '800', cursor: 'pointer', fontSize: '13px', transition: 'all 0.15s', fontFamily: 'inherit' }}
+                >
+                  🗂️ כרטיסיות
+                </button>
+              </div>
+
+              {userRole === 'מנהל' && (
+                <button
+                  onClick={() => setShowAddProjectModal(true)}
+                  style={{ padding: '8px 16px', backgroundColor: '#2563eb', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '800', color: '#ffffff', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  + פרויקט חדש
+                </button>
+              )}
+            </div>
           </div>
 
+          {/* תגיות פרויקטים */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
             <button
               onClick={() => setSelectedProjects([])}
@@ -696,16 +942,22 @@ export default function App() {
                 color: selectedProjects.length === 0 ? '#ffffff' : theme.textMain,
                 fontWeight: '800',
                 fontSize: '13px',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                fontFamily: 'inherit'
               }}
             >
-              כל הפרויקטים ({tasks.filter((t) => (showArchivedView ? t.isArchived : !t.isArchived)).length})
+              כל הפרויקטים ({filteredTasks.length})
             </button>
 
             {allProjectNames.map((pName) => {
               const isSelected = selectedProjects.includes(pName);
-              const count = tasks.filter((t) => t.project === pName && (showArchivedView ? t.isArchived : !t.isArchived)).length;
+              const count = tasks.filter((t) => {
+                if (currentTab === 'trash') return t.isDeleted && t.project === pName;
+                if (currentTab === 'archived') return !t.isDeleted && t.isArchived && t.project === pName;
+                return !t.isDeleted && !t.isArchived && t.project === pName;
+              }).length;
               const pDoc = projects.find((p) => p.name === pName);
+              const pColor = getProjectColor(pName);
 
               return (
                 <div
@@ -716,22 +968,23 @@ export default function App() {
                     gap: '6px',
                     padding: '6px 14px',
                     borderRadius: '20px',
-                    border: isSelected ? '1.5px solid #2563eb' : `1px solid ${theme.border}`,
-                    backgroundColor: isSelected ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : theme.subCardBg,
-                    color: isSelected ? (isDarkMode ? '#bfdbfe' : '#2563eb') : theme.textMain,
+                    border: isSelected ? `1.5px solid ${pColor}` : `1px solid ${theme.border}`,
+                    backgroundColor: isSelected ? `${pColor}20` : theme.subCardBg,
+                    color: isSelected ? pColor : theme.textMain,
                     fontWeight: isSelected ? '800' : '600',
                     fontSize: '13px'
                   }}
                 >
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: pColor }} />
                   <span onClick={() => toggleProjectSelection(pName)} style={{ cursor: 'pointer' }}>
                     {isSelected ? '✓ ' : ''}{pName} ({count})
                   </span>
 
                   {userRole === 'מנהל' && pDoc && (
                     <span
-                      onClick={() => { setEditingProject(pDoc); setEditingProjectNewName(pDoc.name); }}
+                      onClick={() => { setEditingProject(pDoc); setEditingProjectNewName(pDoc.name); setEditingProjectNewColor(pDoc.color || '#2563eb'); }}
                       style={{ cursor: 'pointer', opacity: 0.6, fontSize: '11px' }}
-                      title="ערוך שם פרויקט"
+                      title="ערוך שם וצבע פרויקט"
                     >
                       ✏️
                     </span>
@@ -742,20 +995,96 @@ export default function App() {
           </div>
         </div>
 
-        {/* שורת חיפוש, סינונים והוספת משימה */}
+        {/* טאבים ראשיים: משימות פעילות | ארכיון | סל מחזור */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setCurrentTab('active')}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '12px',
+                border: currentTab === 'active' ? '1.5px solid #2563eb' : `1px solid ${theme.border}`,
+                backgroundColor: currentTab === 'active' ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : theme.cardBg,
+                color: currentTab === 'active' ? '#2563eb' : theme.textMain,
+                fontWeight: '800',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              📋 משימות פעילות ({counts.active})
+            </button>
+
+            <button
+              onClick={() => setCurrentTab('archived')}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '12px',
+                border: currentTab === 'archived' ? '1.5px solid #d97706' : `1px solid ${theme.border}`,
+                backgroundColor: currentTab === 'archived' ? (isDarkMode ? '#451a03' : '#fef3c7') : theme.cardBg,
+                color: currentTab === 'archived' ? '#d97706' : theme.textMain,
+                fontWeight: '800',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              📦 ארכיון ({counts.archived})
+            </button>
+
+            <button
+              onClick={() => setCurrentTab('trash')}
+              style={{
+                padding: '10px 18px',
+                borderRadius: '12px',
+                border: currentTab === 'trash' ? '1.5px solid #dc2626' : `1px solid ${theme.border}`,
+                backgroundColor: currentTab === 'trash' ? (isDarkMode ? '#450a0a' : '#fee2e2') : theme.cardBg,
+                color: currentTab === 'trash' ? '#dc2626' : theme.textMain,
+                fontWeight: '800',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              🗑️ סל מחזור ({counts.trash})
+            </button>
+          </div>
+
+          {/* פעולות מיוחדות לטאבים */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {userRole === 'מנהל' && currentTab === 'active' && counts.completedActive > 0 && (
+              <button
+                onClick={handleArchiveAllCompleted}
+                style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid #d97706', backgroundColor: '#fffbeb', color: '#b45309', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}
+              >
+                📦 העבר משימות שהושלמו לארכיון ({counts.completedActive})
+              </button>
+            )}
+
+            {userRole === 'מנהל' && currentTab === 'trash' && counts.trash > 0 && (
+              <button
+                onClick={handleEmptyTrash}
+                style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}
+              >
+                🔥 רוקן סל מחזור
+              </button>
+            )}
+          </div>
+
+        </div>
+
+        {/* שורת חיפוש וסינונים */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="חיפוש משימה, אחראי, נושא..."
-            style={{ flex: 1, minWidth: '200px', padding: '12px 18px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none' }}
+            style={{ flex: 1, minWidth: '200px', padding: '12px 18px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontFamily: 'inherit' }}
           />
 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700' }}
+            style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700', fontFamily: 'inherit' }}
           >
             <option value="הכל">כל הסטטוסים</option>
             <option value="פתוח">פתוח</option>
@@ -766,7 +1095,7 @@ export default function App() {
           <select
             value={priorityFilter}
             onChange={(e) => setPriorityFilter(e.target.value)}
-            style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700' }}
+            style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700', fontFamily: 'inherit' }}
           >
             <option value="הכל">כל העדיפויות</option>
             <option value="נמוכה">נמוכה</option>
@@ -775,28 +1104,10 @@ export default function App() {
             <option value="קריטית">קריטית</option>
           </select>
 
-          {userRole === 'מנהל' && (
-            <button
-              onClick={() => setShowArchivedView(!showArchivedView)}
-              style={{
-                padding: '12px 18px',
-                borderRadius: '12px',
-                border: showArchivedView ? '1.5px solid #d97706' : `1px solid ${theme.border}`,
-                backgroundColor: showArchivedView ? '#fef3c7' : theme.cardBg,
-                color: showArchivedView ? '#b45309' : theme.textMain,
-                fontWeight: '800',
-                cursor: 'pointer',
-                fontSize: '14px'
-              }}
-            >
-              {showArchivedView ? '📂 חזור למשימות פעילות' : '📦 ארכיון'}
-            </button>
-          )}
-
-          {userRole === 'מנהל' && !showArchivedView && (
+          {userRole === 'מנהל' && currentTab === 'active' && (
             <button
               onClick={() => setShowAddTaskModal(true)}
-              style={{ padding: '12px 24px', backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '12px', fontWeight: '800', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 12px rgba(37,99,235,0.3)' }}
+              style={{ padding: '12px 24px', backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '12px', fontWeight: '800', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 12px rgba(37,99,235,0.3)', fontFamily: 'inherit' }}
             >
               + משימה חדשה
             </button>
@@ -807,7 +1118,7 @@ export default function App() {
         {editingProject && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '400px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', fontWeight: '800' }}>עריכת שם פרויקט</h3>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', fontWeight: '800' }}>עריכת פרויקט</h3>
               <form onSubmit={handleUpdateProjectName} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <input
                   type="text"
@@ -815,13 +1126,26 @@ export default function App() {
                   onChange={(e) => setEditingProjectNewName(e.target.value)}
                   placeholder="שם פרויקט חדש..."
                   autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px' }}>צבע פרויקט:</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {PROJECT_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setEditingProjectNewColor(c)}
+                        style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: c, border: editingProjectNewColor === c ? '2px solid #ffffff' : 'none', cursor: 'pointer', boxShadow: editingProjectNewColor === c ? '0 0 0 2px #2563eb' : 'none' }}
+                      />
+                    ))}
+                  </div>
+                </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                    שמור שינוי
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    שמור
                   </button>
-                  <button type="button" onClick={() => setEditingProject(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setEditingProject(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -842,7 +1166,7 @@ export default function App() {
                   <select
                     value={editingTask.project}
                     onChange={(e) => setEditingTask({ ...editingTask, project: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none' }}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontFamily: 'inherit' }}
                   >
                     {allProjectNames.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
@@ -854,7 +1178,7 @@ export default function App() {
                     type="text"
                     value={editingTask.topic}
                     onChange={(e) => setEditingTask({ ...editingTask, topic: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
                   />
                 </div>
 
@@ -864,7 +1188,7 @@ export default function App() {
                     value={editingTask.description}
                     onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
                     rows={3}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical' }}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }}
                   />
                 </div>
 
@@ -875,7 +1199,7 @@ export default function App() {
                       type="text"
                       value={editingTask.assignee}
                       onChange={(e) => setEditingTask({ ...editingTask, assignee: e.target.value })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -883,7 +1207,7 @@ export default function App() {
                     <select
                       value={editingTask.priority}
                       onChange={(e) => setEditingTask({ ...editingTask, priority: e.target.value as any })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none' }}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontFamily: 'inherit' }}
                     >
                       <option value="נמוכה">נמוכה</option>
                       <option value="בינונית">בינונית</option>
@@ -900,7 +1224,7 @@ export default function App() {
                       type="date"
                       value={editingTask.dueDate}
                       onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -909,16 +1233,16 @@ export default function App() {
                       type="number"
                       value={editingTask.delays || 0}
                       onChange={(e) => setEditingTask({ ...editingTask, delays: parseInt(e.target.value) || 0 })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
                     />
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     שמור שינויים
                   </button>
-                  <button type="button" onClick={() => setEditingTask(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setEditingTask(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -936,13 +1260,13 @@ export default function App() {
                 value={editingNote.text}
                 onChange={(e) => setEditingNote({ ...editingNote, text: e.target.value })}
                 rows={3}
-                style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', marginBottom: '14px', resize: 'vertical' }}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', marginBottom: '14px', resize: 'vertical', fontFamily: 'inherit' }}
               />
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={handleSaveEditedNote} style={{ flex: 1, padding: '10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                <button onClick={handleSaveEditedNote} style={{ flex: 1, padding: '10px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                   שמור
                 </button>
-                <button onClick={() => setEditingNote(null)} style={{ padding: '10px 16px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                <button onClick={() => setEditingNote(null)} style={{ padding: '10px 16px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                   ביטול
                 </button>
               </div>
@@ -963,13 +1287,13 @@ export default function App() {
                   onChange={(e) => setNewAdminPasswordInput(e.target.value)}
                   placeholder="הקלד סיסמה חדשה..."
                   autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                    שמור סיסמה
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    שמור
                   </button>
-                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} style={{ padding: '12px 16px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} style={{ padding: '12px 16px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -990,13 +1314,26 @@ export default function App() {
                   onChange={(e) => setNewProjectNameInput(e.target.value)}
                   placeholder="שם הפרויקט החדש..."
                   autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '15px', boxSizing: 'border-box' }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '15px', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px' }}>בחר צבע לפרויקט:</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {PROJECT_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setNewProjectColorInput(c)}
+                        style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: c, border: newProjectColorInput === c ? '2px solid #ffffff' : 'none', cursor: 'pointer', boxShadow: newProjectColorInput === c ? '0 0 0 2px #2563eb' : 'none' }}
+                      />
+                    ))}
+                  </div>
+                </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     צור פרויקט
                   </button>
-                  <button type="button" onClick={() => setShowAddProjectModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setShowAddProjectModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -1017,7 +1354,7 @@ export default function App() {
                   <select
                     value={newProject}
                     onChange={(e) => setNewProject(e.target.value)}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px' }}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
                   >
                     {allProjectNames.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
@@ -1030,7 +1367,7 @@ export default function App() {
                     value={newTopic}
                     onChange={(e) => setNewTopic(e.target.value)}
                     placeholder="למשל: תוכנה, חומרה, בדיקות..."
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
                   />
                 </div>
 
@@ -1041,7 +1378,7 @@ export default function App() {
                     onChange={(e) => setNewDescription(e.target.value)}
                     placeholder="מה נדרש לבצע?"
                     rows={3}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px' }}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px', fontFamily: 'inherit' }}
                   />
                 </div>
 
@@ -1053,7 +1390,7 @@ export default function App() {
                       value={newAssignee}
                       onChange={(e) => setNewAssignee(e.target.value)}
                       placeholder="שם האחראי..."
-                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
+                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -1061,7 +1398,7 @@ export default function App() {
                     <select
                       value={newPriority}
                       onChange={(e) => setNewPriority(e.target.value as any)}
-                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px' }}
+                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
                     >
                       <option value="נמוכה">נמוכה</option>
                       <option value="בינונית">בינונית</option>
@@ -1077,15 +1414,15 @@ export default function App() {
                     type="date"
                     value={newDueDate}
                     onChange={(e) => setNewDueDate(e.target.value)}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px' }}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
                   />
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     שמור משימה
                   </button>
-                  <button type="button" onClick={() => setShowAddTaskModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setShowAddTaskModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -1094,23 +1431,24 @@ export default function App() {
           </div>
         )}
 
-        {/* תצוגה ראשית של פרויקטים ומשימות */}
+        {/* תצוגה ראשית */}
         {allProjectNames
           .filter((p) => selectedProjects.length === 0 || selectedProjects.includes(p))
           .map((projectName) => {
             const projectTasks = filteredTasks.filter((t) => t.project === projectName);
             const projectDoc = projects.find((p) => p.name === projectName);
+            const pColor = getProjectColor(projectName);
 
-            if (projectTasks.length === 0 && showArchivedView) return null;
+            if (projectTasks.length === 0 && currentTab !== 'active') return null;
 
             return (
               <div key={projectName} style={{ backgroundColor: theme.cardBg, borderRadius: '20px', border: `1px solid ${theme.border}`, overflow: 'hidden', marginBottom: '28px', boxShadow: '0 4px 14px rgba(0,0,0,0.03)' }}>
                 
                 {/* כותרת פרויקט */}
-                <div style={{ backgroundColor: isDarkMode ? '#0f172a' : '#1e293b', color: '#ffffff', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ backgroundColor: isDarkMode ? '#0f172a' : '#1e293b', borderTop: `4px solid ${pColor}`, color: '#ffffff', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ backgroundColor: showArchivedView ? '#d97706' : '#2563eb', padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '800' }}>
-                      {showArchivedView ? 'ארכיון' : 'פרויקט'}
+                    <span style={{ backgroundColor: pColor, padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '800' }}>
+                      {currentTab === 'trash' ? 'סל מחזור' : currentTab === 'archived' ? 'ארכיון' : 'פרויקט'}
                     </span>
                     <h2 style={{ fontSize: '18px', fontWeight: '800', margin: 0 }}>{projectName}</h2>
                     <span style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 10px', borderRadius: '12px' }}>
@@ -1119,17 +1457,19 @@ export default function App() {
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      onClick={() => handleShareWhatsApp(projectName)}
-                      style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#86efac', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                    >
-                      💬 WhatsApp פרויקט
-                    </button>
+                    {currentTab === 'active' && (
+                      <button
+                        onClick={() => handleShareWhatsApp(projectName)}
+                        style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#86efac', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit' }}
+                      >
+                        💬 WhatsApp פרויקט
+                      </button>
+                    )}
 
-                    {projectDoc && userRole === 'מנהל' && !showArchivedView && (
+                    {projectDoc && userRole === 'מנהל' && currentTab === 'active' && (
                       <button
                         onClick={() => handleDeleteProject(projectDoc.id, projectDoc.name)}
-                        style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                        style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', fontFamily: 'inherit' }}
                       >
                         🗑️ מחק פרויקט
                       </button>
@@ -1143,23 +1483,39 @@ export default function App() {
                   </div>
                 ) : viewMode === 'table' ? (
                   
-                  /* 1. תצוגת טבלה איכותית ומרווחת */
+                  /* 1. תצוגת טבלה */
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '1300px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '1450px' }}>
                       <thead>
                         <tr style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderBottom: `1.5px solid ${theme.border}`, color: theme.textMuted }}>
-                          <th style={{ padding: '14px 16px', width: '110px' }}>נושא</th>
+                          <th style={{ padding: '14px 16px', width: '100px' }}>נושא</th>
                           <th style={{ padding: '14px 16px' }}>תיאור המשימה</th>
+                          <th style={{ padding: '14px 16px', width: '170px' }}>צ'קליסט תתי-משימות</th>
                           <th style={{ padding: '14px 12px', width: '110px' }}>אחראי</th>
-                          <th style={{ padding: '14px 10px', width: '85px' }}>עדיפות</th>
+                          <th
+                            onClick={() => handleSort('priority')}
+                            style={{ padding: '14px 10px', width: '85px', cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            עדיפות {sortBy === 'priority' ? (sortOrder === 'asc' ? '↑' : '↓') : '↕'}
+                          </th>
                           <th style={{ padding: '14px 12px', width: '95px' }}>פתיחה</th>
-                          <th style={{ padding: '14px 12px', width: '105px' }}>תאריך יעד</th>
+                          <th
+                            onClick={() => handleSort('dueDate')}
+                            style={{ padding: '14px 12px', width: '105px', cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            תאריך יעד {sortBy === 'dueDate' ? (sortOrder === 'asc' ? '↑' : '↓') : '↕'}
+                          </th>
                           <th style={{ padding: '14px 12px', width: '105px' }}>השלמה</th>
-                          <th style={{ padding: '14px 10px', width: '75px', textAlign: 'center' }}>דחיות</th>
+                          <th
+                            onClick={() => handleSort('delays')}
+                            style={{ padding: '14px 10px', width: '95px', textAlign: 'center', cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            דחיות {sortBy === 'delays' ? (sortOrder === 'asc' ? '↑' : '↓') : '↕'}
+                          </th>
                           <th style={{ padding: '14px 10px', width: '85px', textAlign: 'center' }}>איחור</th>
                           <th style={{ padding: '14px 14px', width: '110px' }}>סטטוס</th>
-                          <th style={{ padding: '14px 16px', minWidth: '300px' }}>הערות (כולל תאריך, שעה ועריכה)</th>
-                          {userRole === 'מנהל' && <th style={{ padding: '14px 12px', width: '100px', textAlign: 'center' }}>ניהול</th>}
+                          <th style={{ padding: '14px 16px', minWidth: '300px' }}>הערות</th>
+                          {userRole === 'מנהל' && <th style={{ padding: '14px 12px', width: '110px', textAlign: 'center' }}>פעולות</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1167,6 +1523,10 @@ export default function App() {
                           const delayDays = calculateDelayDays(t.dueDate, t.status, t.completedDate);
                           const dueSoon = isDueSoon(t.dueDate, t.status);
                           const isCompleted = t.status === 'הושלם';
+
+                          const completedSub = (t.subtasks || []).filter((s) => s.completed).length;
+                          const totalSub = (t.subtasks || []).length;
+                          const subProgress = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
 
                           return (
                             <tr
@@ -1182,8 +1542,8 @@ export default function App() {
                               }}
                             >
                               
-                              <td style={{ padding: '14px 16px', fontWeight: '800', color: '#2563eb' }}>
-                                <span style={{ backgroundColor: isDarkMode ? '#1e3a8a' : '#eff6ff', padding: '4px 8px', borderRadius: '6px' }}>
+                              <td style={{ padding: '14px 16px', fontWeight: '800', color: pColor }}>
+                                <span style={{ backgroundColor: `${pColor}15`, padding: '4px 8px', borderRadius: '6px' }}>
                                   {t.topic}
                                 </span>
                               </td>
@@ -1197,13 +1557,72 @@ export default function App() {
                                 )}
                               </td>
 
+                              {/* תתי-משימות */}
+                              <td style={{ padding: '14px 16px' }}>
+                                {totalSub > 0 && (
+                                  <div style={{ marginBottom: '6px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 'bold', color: theme.textMuted, marginBottom: '2px' }}>
+                                      <span>התקדמות: {completedSub}/{totalSub}</span>
+                                      <span>{subProgress}%</span>
+                                    </div>
+                                    <div style={{ width: '100%', height: '4px', backgroundColor: theme.border, borderRadius: '2px', overflow: 'hidden' }}>
+                                      <div style={{ width: `${subProgress}%`, height: '100%', backgroundColor: subProgress === 100 ? '#16a34a' : '#2563eb' }} />
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', maxHeight: '90px', overflowY: 'auto' }}>
+                                  {(t.subtasks || []).map((s) => (
+                                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px', gap: '4px' }}>
+                                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', flex: 1 }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={s.completed}
+                                          onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
+                                          disabled={currentTab === 'trash'}
+                                        />
+                                        <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
+                                          {s.text}
+                                        </span>
+                                      </label>
+                                      {currentTab !== 'trash' && (
+                                        <button
+                                          onClick={() => handleDeleteSubTask(t.id, s.id)}
+                                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '10px', padding: '0 2px' }}
+                                        >
+                                          ✕
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {currentTab === 'active' && (
+                                  <div style={{ display: 'flex', gap: '3px', marginTop: '6px' }}>
+                                    <input
+                                      type="text"
+                                      value={newSubTaskInputs[t.id] || ''}
+                                      onChange={(e) => setNewSubTaskInputs({ ...newSubTaskInputs, [t.id]: e.target.value })}
+                                      placeholder="+ תת משימה..."
+                                      style={{ flex: 1, padding: '4px 6px', borderRadius: '4px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px', outline: 'none', fontFamily: 'inherit' }}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleAddSubTask(t.id)}
+                                    />
+                                    <button
+                                      onClick={() => handleAddSubTask(t.id)}
+                                      style={{ padding: '4px 8px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+
                               <td style={{ padding: '14px 12px' }}>
                                 <span style={{ backgroundColor: theme.subCardBg, padding: '4px 10px', borderRadius: '12px', fontSize: '12px', color: theme.textMain, fontWeight: '700' }}>
                                   👤 {t.assignee}
                                 </span>
                               </td>
 
-                              {/* עדיפות */}
                               <td style={{ padding: '14px 10px' }}>
                                 <span style={{
                                   padding: '3px 8px',
@@ -1235,18 +1654,44 @@ export default function App() {
                                 {t.completedDate ? `✓ ${t.completedDate}` : '-'}
                               </td>
 
+                              {/* דחיות */}
                               <td style={{ padding: '14px 10px', textAlign: 'center' }}>
-                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: (t.delays || 0) > 0 ? '#fff7ed' : theme.subCardBg, padding: '2px 8px', borderRadius: '8px', border: (t.delays || 0) > 0 ? '1px solid #fed7aa' : `1px solid ${theme.border}` }}>
-                                  <span style={{ fontWeight: '800', color: (t.delays || 0) > 0 ? '#ea580c' : theme.textMuted, fontSize: '12px' }}>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                                  <span style={{
+                                    backgroundColor: (t.delays || 0) > 0 ? (isDarkMode ? '#451a03' : '#fff7ed') : theme.subCardBg,
+                                    color: (t.delays || 0) > 0 ? '#ea580c' : theme.textMuted,
+                                    border: (t.delays || 0) > 0 ? '1px solid #fed7aa' : `1px solid ${theme.border}`,
+                                    padding: '3px 10px',
+                                    borderRadius: '8px',
+                                    fontWeight: '800',
+                                    fontSize: '12px',
+                                    minWidth: '22px',
+                                    textAlign: 'center'
+                                  }}>
                                     {t.delays || 0}
                                   </span>
-                                  {userRole === 'מנהל' && !showArchivedView && (
+
+                                  {userRole === 'מנהל' && currentTab === 'active' && (
                                     <button
                                       onClick={() => handleIncrementDelay(t.id, t.delays)}
-                                      style={{ background: 'none', border: 'none', color: '#ea580c', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px', padding: '0 2px' }}
+                                      style={{
+                                        width: '24px',
+                                        height: '24px',
+                                        borderRadius: '6px',
+                                        border: `1px solid ${theme.border}`,
+                                        backgroundColor: theme.subCardBg,
+                                        color: '#ea580c',
+                                        cursor: 'pointer',
+                                        fontWeight: '900',
+                                        fontSize: '13px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: 0
+                                      }}
                                       title="הוסף דחייה (+1)"
                                     >
-                                      +1
+                                      +
                                     </button>
                                   )}
                                 </div>
@@ -1266,14 +1711,15 @@ export default function App() {
                                 <select
                                   value={t.status}
                                   onChange={(e) => handleStatusChange(t.id, e.target.value as any)}
-                                  disabled={showArchivedView}
+                                  disabled={currentTab !== 'active'}
                                   style={{
                                     padding: '6px 10px',
                                     borderRadius: '8px',
                                     border: 'none',
                                     fontSize: '12px',
                                     fontWeight: '800',
-                                    cursor: showArchivedView ? 'default' : 'pointer',
+                                    cursor: currentTab === 'active' ? 'pointer' : 'default',
+                                    fontFamily: 'inherit',
                                     backgroundColor: t.status === 'הושלם' ? '#dcfce7' : t.status === 'בביצוע' ? '#fef9c3' : '#e0f2fe',
                                     color: t.status === 'הושלם' ? '#166534' : t.status === 'בביצוע' ? '#854d0e' : '#0369a1'
                                   }}
@@ -1284,7 +1730,7 @@ export default function App() {
                                 </select>
                               </td>
 
-                              {/* עמודת הערות גלויה עם עריכה ומחיקה */}
+                              {/* הערות */}
                               <td style={{ padding: '14px 16px' }}>
                                 <div style={{ maxHeight: '110px', overflowY: 'auto', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                   {(t.notes || []).length === 0 ? (
@@ -1298,23 +1744,24 @@ export default function App() {
                                             <span style={{ color: theme.textMuted, fontSize: '10px', marginRight: '6px' }}>🕒 {n.time}</span>
                                           </div>
                                           
-                                          {/* כפתורי עריכה/מחיקה להערה */}
-                                          <div style={{ display: 'flex', gap: '4px' }}>
-                                            <button
-                                              onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })}
-                                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', opacity: 0.6 }}
-                                              title="ערוך הערה"
-                                            >
-                                              ✏️
-                                            </button>
-                                            <button
-                                              onClick={() => handleDeleteNote(t.id, n.id)}
-                                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#ef4444', opacity: 0.6 }}
-                                              title="מחק הערה"
-                                            >
-                                              🗑️
-                                            </button>
-                                          </div>
+                                          {currentTab === 'active' && (
+                                            <div style={{ display: 'flex', gap: '4px' }}>
+                                              <button
+                                                onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', opacity: 0.6 }}
+                                                title="ערוך הערה"
+                                              >
+                                                ✏️
+                                              </button>
+                                              <button
+                                                onClick={() => handleDeleteNote(t.id, n.id)}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#ef4444', opacity: 0.6 }}
+                                                title="מחק הערה"
+                                              >
+                                                🗑️
+                                              </button>
+                                            </div>
+                                          )}
                                         </div>
                                         <div style={{ color: theme.textMain, whiteSpace: 'pre-wrap' }}>{n.text}</div>
                                       </div>
@@ -1322,19 +1769,19 @@ export default function App() {
                                   )}
                                 </div>
 
-                                {!showArchivedView && (
+                                {currentTab === 'active' && (
                                   <div style={{ display: 'flex', gap: '4px' }}>
                                     <input
                                       type="text"
                                       value={noteInputs[t.id] || ''}
                                       onChange={(e) => setNoteInputs({ ...noteInputs, [t.id]: e.target.value })}
                                       placeholder="הוסף הערה..."
-                                      style={{ flex: 1, padding: '6px 10px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '12px', outline: 'none' }}
+                                      style={{ flex: 1, padding: '6px 10px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '12px', outline: 'none', fontFamily: 'inherit' }}
                                       onKeyDown={(e) => e.key === 'Enter' && handleAddNote(t.id)}
                                     />
                                     <button
                                       onClick={() => handleAddNote(t.id)}
-                                      style={{ padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}
+                                      style={{ padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold', fontFamily: 'inherit' }}
                                     >
                                       שלח
                                     </button>
@@ -1342,30 +1789,75 @@ export default function App() {
                                 )}
                               </td>
 
+                              {/* פעולות מנהל */}
                               {userRole === 'מנהל' && (
                                 <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                   <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                    <button
-                                      onClick={() => setEditingTask(t)}
-                                      style={{ padding: '4px 6px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                                      title="ערוך משימה מלאה"
-                                    >
-                                      ✏️
-                                    </button>
-                                    <button
-                                      onClick={() => handleToggleArchive(t.id, t.isArchived)}
-                                      style={{ padding: '4px 6px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                                      title={t.isArchived ? "שחזר" : "ארכיב"}
-                                    >
-                                      {t.isArchived ? '↩️' : '📦'}
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteTask(t.id)}
-                                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '13px', padding: '2px' }}
-                                      title="מחק לצמיתות"
-                                    >
-                                      ✕
-                                    </button>
+                                    
+                                    {currentTab === 'active' && (
+                                      <>
+                                        <button
+                                          onClick={() => setEditingTask(t)}
+                                          style={{ padding: '4px 6px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="ערוך משימה"
+                                        >
+                                          ✏️
+                                        </button>
+                                        <button
+                                          onClick={() => handleToggleArchive(t.id, t.isArchived)}
+                                          style={{ padding: '4px 6px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="העבר לארכיון"
+                                        >
+                                          📦
+                                        </button>
+                                        <button
+                                          onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                          style={{ padding: '4px 6px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="העבר לסל מחזור"
+                                        >
+                                          🗑️
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {currentTab === 'archived' && (
+                                      <>
+                                        <button
+                                          onClick={() => handleToggleArchive(t.id, t.isArchived)}
+                                          style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: '#2563eb', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="שחזר למשימות פעילות"
+                                        >
+                                          ↩️ החזר
+                                        </button>
+                                        <button
+                                          onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                          style={{ padding: '4px 6px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="העבר לסל מחזור"
+                                        >
+                                          🗑️
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {currentTab === 'trash' && (
+                                      <>
+                                        <button
+                                          onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                          style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #bbf7d0', backgroundColor: '#f0fdf4', color: '#16a34a', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="שחזר מסל מחזור"
+                                        >
+                                          ↩️ שחזר
+                                        </button>
+                                        <button
+                                          onClick={() => handlePermanentDelete(t.id)}
+                                          style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          title="מחק לצמיתות"
+                                        >
+                                          ✕ מחק
+                                        </button>
+                                      </>
+                                    )}
+
                                   </div>
                                 </td>
                               )}
@@ -1378,18 +1870,22 @@ export default function App() {
                   </div>
                 ) : (
                   
-                  /* 2. תצוגת כרטיסיות מודרנית */
+                  /* 2. תצוגת כרטיסיות */
                   <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
                     {projectTasks.map((t) => {
                       const delayDays = calculateDelayDays(t.dueDate, t.status, t.completedDate);
                       const isCompleted = t.status === 'הושלם';
+
+                      const completedSub = (t.subtasks || []).filter((s) => s.completed).length;
+                      const totalSub = (t.subtasks || []).length;
+                      const subProgress = totalSub > 0 ? Math.round((completedSub / totalSub) * 100) : 0;
 
                       return (
                         <div key={t.id} style={{ backgroundColor: isCompleted ? (isDarkMode ? '#131d2e' : '#fafafa') : theme.subCardBg, border: `1.5px solid ${theme.border}`, borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <span style={{ backgroundColor: isDarkMode ? '#1e3a8a' : '#eff6ff', color: '#2563eb', fontWeight: '800', fontSize: '12px', padding: '3px 8px', borderRadius: '6px' }}>
+                              <span style={{ backgroundColor: `${pColor}15`, color: pColor, fontWeight: '800', fontSize: '12px', padding: '3px 8px', borderRadius: '6px' }}>
                                 {t.topic}
                               </span>
                               <span style={{
@@ -1413,14 +1909,15 @@ export default function App() {
                             <select
                               value={t.status}
                               onChange={(e) => handleStatusChange(t.id, e.target.value as any)}
-                              disabled={showArchivedView}
+                              disabled={currentTab !== 'active'}
                               style={{
                                 padding: '4px 8px',
                                 borderRadius: '6px',
                                 border: 'none',
                                 fontSize: '11px',
                                 fontWeight: '800',
-                                cursor: showArchivedView ? 'default' : 'pointer',
+                                cursor: currentTab === 'active' ? 'pointer' : 'default',
+                                fontFamily: 'inherit',
                                 backgroundColor: t.status === 'הושלם' ? '#dcfce7' : t.status === 'בביצוע' ? '#fef9c3' : '#e0f2fe',
                                 color: t.status === 'הושלם' ? '#166534' : t.status === 'בביצוע' ? '#854d0e' : '#0369a1'
                               }}
@@ -1434,6 +1931,31 @@ export default function App() {
                           <div style={{ fontSize: '15px', fontWeight: '700', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
                             {t.description}
                           </div>
+
+                          {/* תתי משימות */}
+                          {totalSub > 0 && (
+                            <div style={{ backgroundColor: theme.cardBg, padding: '8px 10px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold', color: theme.textMuted, marginBottom: '4px' }}>
+                                <span>תתי-משימות: {completedSub}/{totalSub}</span>
+                                <span>{subProgress}%</span>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                {t.subtasks.map((s) => (
+                                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={s.completed}
+                                      onChange={() => handleToggleSubTask(t.id, s.id, s.completed)}
+                                      disabled={currentTab === 'trash'}
+                                    />
+                                    <span style={{ textDecoration: s.completed ? 'line-through' : 'none', color: s.completed ? theme.textMuted : theme.textMain }}>
+                                      {s.text}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
 
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '12px', color: theme.textMuted }}>
                             <span style={{ backgroundColor: theme.cardBg, padding: '3px 8px', borderRadius: '10px', fontWeight: '700', color: theme.textMain }}>
@@ -1463,10 +1985,12 @@ export default function App() {
                                         <span style={{ fontWeight: '700' }}>{n.author}</span>
                                         <span style={{ color: theme.textMuted, fontSize: '9px', marginRight: '4px' }}>{n.time}</span>
                                       </div>
-                                      <div style={{ display: 'flex', gap: '2px' }}>
-                                        <button onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px' }}>✏️</button>
-                                        <button onClick={() => handleDeleteNote(t.id, n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px', color: '#ef4444' }}>🗑️</button>
-                                      </div>
+                                      {currentTab === 'active' && (
+                                        <div style={{ display: 'flex', gap: '2px' }}>
+                                          <button onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px' }}>✏️</button>
+                                          <button onClick={() => handleDeleteNote(t.id, n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '10px', color: '#ef4444' }}>🗑️</button>
+                                        </div>
+                                      )}
                                     </div>
                                     <div style={{ color: theme.textMain }}>{n.text}</div>
                                   </div>
@@ -1474,7 +1998,7 @@ export default function App() {
                               )}
                             </div>
 
-                            {!showArchivedView && (
+                            {currentTab === 'active' && (
                               <div style={{ display: 'flex', gap: '4px' }}>
                                 <input
                                   type="text"
@@ -1494,26 +2018,67 @@ export default function App() {
                             )}
                           </div>
 
+                          {/* פעולות מנהל בכרטיסייה */}
                           {userRole === 'מנהל' && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', borderTop: `1px solid ${theme.border}`, paddingTop: '8px' }}>
-                              <button
-                                onClick={() => setEditingTask(t)}
-                                style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                              >
-                                ✏️ ערוך
-                              </button>
-                              <button
-                                onClick={() => handleToggleArchive(t.id, t.isArchived)}
-                                style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                              >
-                                {t.isArchived ? '↩️ שחזר' : '📦 ארכיב'}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteTask(t.id)}
-                                style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                              >
-                                🗑️ מחק
-                              </button>
+                              
+                              {currentTab === 'active' && (
+                                <>
+                                  <button
+                                    onClick={() => setEditingTask(t)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    ✏️ ערוך
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleArchive(t.id, t.isArchived)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    📦 ארכיב
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    🗑️ סל מחזור
+                                  </button>
+                                </>
+                              )}
+
+                              {currentTab === 'archived' && (
+                                <>
+                                  <button
+                                    onClick={() => handleToggleArchive(t.id, t.isArchived)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: '#2563eb', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    ↩️ החזר
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    🗑️ סל מחזור
+                                  </button>
+                                </>
+                              )}
+
+                              {currentTab === 'trash' && (
+                                <>
+                                  <button
+                                    onClick={() => handleToggleTrash(t.id, t.isDeleted)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #bbf7d0', backgroundColor: '#f0fdf4', color: '#16a34a', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    ↩️ שחזר
+                                  </button>
+                                  <button
+                                    onClick={() => handlePermanentDelete(t.id)}
+                                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fee2e2', backgroundColor: '#fef2f2', color: '#dc2626', fontSize: '11px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                                  >
+                                    ✕ מחק לצמיתות
+                                  </button>
+                                </>
+                              )}
+
                             </div>
                           )}
 
