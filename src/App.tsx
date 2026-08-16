@@ -79,7 +79,7 @@ export default function App() {
   // תצוגות: טבלה, כרטיסיות, יומן, דשבורד
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'calendar' | 'dashboard'>('table');
   const [currentTab, setCurrentTab] = useState<'active' | 'archived' | 'trash'>('active');
-  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('הכל'); // בורר פרויקטים נפתח
   const [statusFilter, setStatusFilter] = useState<string>('הכל');
   const [priorityFilter, setPriorityFilter] = useState<string>('הכל');
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,6 +89,10 @@ export default function App() {
   // Command Palette (Ctrl+K)
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
+  // מודאל שיתוף וואטסאפ מותאם אישית
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [selectedTaskIdsForWhatsApp, setSelectedTaskIdsForWhatsApp] = useState<string[]>([]);
+
   // מודאלים
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
@@ -97,7 +101,7 @@ export default function App() {
   const [editingProjectNewName, setEditingProjectNewName] = useState('');
   const [editingProjectNewColor, setEditingProjectNewColor] = useState('#2563eb');
 
-  // משימה חדשה (כעת שדות רשות חוץ מהתיאור)
+  // משימה חדשה
   const [newProject, setNewProject] = useState('');
   const [newTopic, setNewTopic] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -328,7 +332,6 @@ export default function App() {
     await deleteDoc(doc(db, 'projects_list', projectId));
   };
 
-  // יצירת משימה - רק תיאור חובה, שאר השדות אופציונליים
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (userRole !== 'מנהל') return;
@@ -609,7 +612,7 @@ export default function App() {
       `"${t.topic}"`,
       `"${t.description.replace(/"/g, '""')}"`,
       `"${(t.subtasks || []).map((s) => `${s.completed ? '[V]' : '[ ]'} ${s.text}`).join('; ')}"`,
-      `"${t.assignee}"`,
+      `"${t.assignee.replace(/\n/g, ', ')}"`,
       `"${t.priority}"`,
       `"${t.startDate}"`,
       `"${t.dueDate}"`,
@@ -630,49 +633,39 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const handleShareWhatsApp = (projectName?: string) => {
-    const relevant = tasks.filter((t) =>
-      !t.isDeleted &&
-      !t.isArchived &&
-      (projectName ? t.project === projectName : selectedProjects.length === 0 || selectedProjects.includes(t.project))
-    );
+  // שליחה לוואטסאפ מתוך המשימות שנבחרו במודאל
+  const handleExecuteWhatsAppSend = () => {
+    const relevant = tasks.filter((t) => selectedTaskIdsForWhatsApp.includes(t.id));
 
     if (relevant.length === 0) {
-      alert("אין משימות פתוחות לשיתוף.");
+      alert("לא נבחרו משימות לשיתוף.");
       return;
     }
 
-    let text = `📋 *סיכום משימות - ${projectName || 'כללי'}*\n`;
-    text += `סה"כ: ${relevant.length} משימות\n\n`;
+    let text = `📋 *סיכום משימות נבחרות*\n\n`;
 
     relevant.forEach((t, idx) => {
-      text += `${idx + 1}. *[${t.project}]* ${t.topic || 'ללא נושא'} - ${t.description}\n`;
-      text += `   👤 אחראי: ${t.assignee || 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | עדיפות: ${t.priority} | סטטוס: ${t.status}\n`;
+      text += `${idx + 1}. *[פרויקט: ${t.project}]* ${t.topic ? `(${t.topic}) ` : ''}- ${t.description}\n`;
+      text += `   👤 אחראי: ${t.assignee ? t.assignee.replace(/\n/g, ', ') : 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | עדיפות: ${t.priority} | סטטוס: ${t.status}\n`;
       if (t.subtasks && t.subtasks.length > 0) {
         const completedCount = t.subtasks.filter((s) => s.completed).length;
         text += `   ☑️ תתי-משימות: ${completedCount}/${t.subtasks.length} הושלמו\n`;
       }
       if (t.notes && t.notes.length > 0) {
-        text += `   💬 הערה אחרונה: ${t.notes[t.notes.length - 1].text}\n`;
+        const lastNote = t.notes.filter(n => !n.isManagerOnly || userRole === 'מנהל').pop();
+        if (lastNote) text += `   💬 הערה אחרונה: ${lastNote.text}\n`;
       }
       text += `\n`;
     });
 
     const encoded = encodeURIComponent(text);
     window.open(`https://wa.me/?text=${encoded}`, '_blank');
+    setShowWhatsAppModal(false);
   };
 
   const allProjectNames = useMemo(() => {
     return Array.from(new Set([...projects.map((p) => p.name), ...tasks.map((t) => t.project)]));
   }, [projects, tasks]);
-
-  const toggleProjectSelection = (projectName: string) => {
-    if (selectedProjects.includes(projectName)) {
-      setSelectedProjects(selectedProjects.filter((p) => p !== projectName));
-    } else {
-      setSelectedProjects([...selectedProjects, projectName]);
-    }
-  };
 
   const handleSort = (column: 'dueDate' | 'priority' | 'delays') => {
     if (sortBy === column) {
@@ -696,7 +689,7 @@ export default function App() {
         matchTab = !t.isDeleted && !t.isArchived;
       }
 
-      const matchProject = selectedProjects.length === 0 || selectedProjects.includes(t.project);
+      const matchProject = selectedProjectFilter === 'הכל' || t.project === selectedProjectFilter;
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
       const matchPriority = priorityFilter === 'הכל' || t.priority === priorityFilter;
       const matchSearch = searchTerm === '' ||
@@ -728,7 +721,7 @@ export default function App() {
     }
 
     return result;
-  }, [tasks, currentTab, selectedProjects, statusFilter, priorityFilter, searchTerm, sortBy, sortOrder]);
+  }, [tasks, currentTab, selectedProjectFilter, statusFilter, priorityFilter, searchTerm, sortBy, sortOrder]);
 
   const getProjectColor = (pName: string) => {
     const p = projects.find((x) => x.name === pName);
@@ -748,8 +741,11 @@ export default function App() {
     
     const assigneeLoad: { [key: string]: number } = {};
     active.forEach((t) => {
-      const name = t.assignee || 'ללא אחראי';
-      assigneeLoad[name] = (assigneeLoad[name] || 0) + 1;
+      if (!t.assignee) return;
+      const names = t.assignee.split('\n').map(n => n.trim()).filter(Boolean);
+      names.forEach(name => {
+        assigneeLoad[name] = (assigneeLoad[name] || 0) + 1;
+      });
     });
 
     const projectDelays: { [key: string]: { totalDelay: number; count: number } } = {};
@@ -907,7 +903,11 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => handleShareWhatsApp()}
+                onClick={() => {
+                  const activeTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived);
+                  setSelectedTaskIdsForWhatsApp(activeTasks.map(t => t.id));
+                  setShowWhatsAppModal(true);
+                }}
                 style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #25d366', backgroundColor: isDarkMode ? '#064e3b' : '#f0fdf4', color: '#16a34a', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
               >
                 💬 WhatsApp
@@ -1006,6 +1006,76 @@ export default function App() {
 
         </header>
 
+        {/* מודאל בחירת משימות לוואטסאפ */}
+        {showWhatsAppModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '540px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', border: `1px solid ${theme.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '10px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>💬 בחירת משימות לשיתוף בוואטסאפ</h3>
+                <button onClick={() => setShowWhatsAppModal(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: theme.textMuted }}>✕</button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <button
+                  onClick={() => {
+                    const active = tasks.filter((t) => !t.isDeleted && !t.isArchived);
+                    setSelectedTaskIdsForWhatsApp(active.map(t => t.id));
+                  }}
+                  style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  בחר הכל
+                </button>
+                <button
+                  onClick={() => setSelectedTaskIdsForWhatsApp([])}
+                  style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+                >
+                  נקה בחירה
+                </button>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px', maxHeight: '40vh' }}>
+                {tasks.filter(t => !t.isDeleted && !t.isArchived).map((t) => {
+                  const isChecked = selectedTaskIdsForWhatsApp.includes(t.id);
+                  return (
+                    <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '10px', backgroundColor: theme.subCardBg, cursor: 'pointer', border: `1px solid ${theme.border}` }}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedTaskIdsForWhatsApp([...selectedTaskIdsForWhatsApp, t.id]);
+                          } else {
+                            setSelectedTaskIdsForWhatsApp(selectedTaskIdsForWhatsApp.filter(id => id !== t.id));
+                          }
+                        }}
+                      />
+                      <div style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        <span style={{ fontWeight: '800', color: getProjectColor(t.project), marginLeft: '6px' }}>[{t.project}]</span>
+                        <span>{t.description}</span>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={handleExecuteWhatsAppSend}
+                  style={{ flex: 1, padding: '12px', backgroundColor: '#25d366', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '800', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  שלח משימות נבחרות בוואטסאפ
+                </button>
+                <button
+                  onClick={() => setShowWhatsAppModal(false)}
+                  style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  ביטול
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Command Palette */}
         {showCommandPalette && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, paddingTop: '15vh' }}>
@@ -1039,13 +1109,25 @@ export default function App() {
           </div>
         )}
 
-        {/* סרגל בחירת פרויקטים + הוספת פרויקט מתוקנת */}
+        {/* סרגל בחירת פרויקטים בתור Dropdown כמו בתמונה + כפתורי תצוגה */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.03)', marginBottom: '20px' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-            <span style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>
-              📁 בחירת פרויקטים להצגה במקביל:
-            </span>
+            
+            {/* בורר פרויקטים נפתח (Dropdown) בלי מספרים */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>📁 פרויקט:</span>
+              <select
+                value={selectedProjectFilter}
+                onChange={(e) => setSelectedProjectFilter(e.target.value)}
+                style={{ padding: '10px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none', fontWeight: '700', fontFamily: 'inherit', minWidth: '180px' }}
+              >
+                <option value="הכל">כל הפרויקטים</option>
+                {allProjectNames.map((pName) => (
+                  <option key={pName} value={pName}>{pName}</option>
+                ))}
+              </select>
+            </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '3px', border: `1px solid ${theme.border}`, flexWrap: 'wrap', gap: '2px' }}>
@@ -1084,69 +1166,6 @@ export default function App() {
                 </button>
               )}
             </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-            <button
-              onClick={() => setSelectedProjects([])}
-              style={{
-                padding: '8px 18px',
-                borderRadius: '20px',
-                border: selectedProjects.length === 0 ? '1.5px solid #2563eb' : `1px solid ${theme.border}`,
-                backgroundColor: selectedProjects.length === 0 ? '#2563eb' : theme.subCardBg,
-                color: selectedProjects.length === 0 ? '#ffffff' : theme.textMain,
-                fontWeight: '800',
-                fontSize: '13px',
-                cursor: 'pointer',
-                fontFamily: 'inherit'
-              }}
-            >
-              כל הפרויקטים ({filteredTasks.length})
-            </button>
-
-            {allProjectNames.map((pName) => {
-              const isSelected = selectedProjects.includes(pName);
-              const count = tasks.filter((t) => {
-                if (currentTab === 'trash') return t.isDeleted && t.project === pName;
-                if (currentTab === 'archived') return !t.isDeleted && t.isArchived && t.project === pName;
-                return !t.isDeleted && !t.isArchived && t.project === pName;
-              }).length;
-              const pDoc = projects.find((p) => p.name === pName);
-              const pColor = getProjectColor(pName);
-
-              return (
-                <div
-                  key={pName}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: isSelected ? `1.5px solid ${pColor}` : `1px solid ${theme.border}`,
-                    backgroundColor: isSelected ? `${pColor}20` : theme.subCardBg,
-                    color: isSelected ? pColor : theme.textMain,
-                    fontWeight: isSelected ? '800' : '600',
-                    fontSize: '13px'
-                  }}
-                >
-                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: pColor }} />
-                  <span onClick={() => toggleProjectSelection(pName)} style={{ cursor: 'pointer' }}>
-                    {isSelected ? '✓ ' : ''}{pName} ({count})
-                  </span>
-
-                  {userRole === 'מנהל' && pDoc && (
-                    <span
-                      onClick={() => { setEditingProject(pDoc); setEditingProjectNewName(pDoc.name); setEditingProjectNewColor(pDoc.color || '#2563eb'); }}
-                      style={{ cursor: 'pointer', opacity: 0.6, fontSize: '11px' }}
-                      title="ערוך שם וצבע פרויקט"
-                    >
-                      ✏️
-                    </span>
-                  )}
-                </div>
-              );
-            })}
           </div>
         </div>
 
@@ -1225,7 +1244,7 @@ export default function App() {
 
         </div>
 
-        {/* שורת חיפוש וסינונים (כולל הסטטוס "נדחה") */}
+        {/* שורת חיפוש וסינונים */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
           <input
             type="text"
@@ -1268,38 +1287,126 @@ export default function App() {
           )}
         </div>
 
-        {/* מודאל עריכת שם פרויקט */}
-        {editingProject && (
+        {/* מודאל פרויקט חדש */}
+        {showAddProjectModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
-            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '400px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', fontWeight: '800' }}>עריכת פרויקט</h3>
-              <form onSubmit={handleUpdateProjectName} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '420px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '18px', fontWeight: '800' }}>הוספת פרויקט חדש</h3>
+              <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <input
                   type="text"
-                  value={editingProjectNewName}
-                  onChange={(e) => setEditingProjectNewName(e.target.value)}
-                  placeholder="שם פרויקט חדש..."
+                  value={newProjectNameInput}
+                  onChange={(e) => setNewProjectNameInput(e.target.value)}
+                  placeholder="שם הפרויקט החדש..."
                   autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '15px', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px' }}>צבע פרויקט:</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', marginBottom: '6px' }}>בחר צבע לפרויקט:</label>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     {PROJECT_COLORS.map((c) => (
                       <button
                         key={c}
                         type="button"
-                        onClick={() => setEditingProjectNewColor(c)}
-                        style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: c, border: editingProjectNewColor === c ? '2px solid #ffffff' : 'none', cursor: 'pointer', boxShadow: editingProjectNewColor === c ? '0 0 0 2px #2563eb' : 'none' }}
+                        onClick={() => setNewProjectColorInput(c)}
+                        style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: c, border: newProjectColorInput === c ? '2px solid #ffffff' : 'none', cursor: 'pointer', boxShadow: newProjectColorInput === c ? '0 0 0 2px #2563eb' : 'none' }}
                       />
                     ))}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-                    שמור
+                    צור פרויקט
                   </button>
-                  <button type="button" onClick={() => setEditingProject(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <button type="button" onClick={() => setShowAddProjectModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    ביטול
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* מודאל משימה חדשה (אחראי כמספר שורות אחד מעל השני) */}
+        {showAddTaskModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '520px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ margin: '0 0 18px 0', fontSize: '20px', fontWeight: '800' }}>הוספת משימה חדשה</h3>
+              <form onSubmit={handleCreateTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>פרויקט:</label>
+                  <select
+                    value={newProject}
+                    onChange={(e) => setNewProject(e.target.value)}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
+                  >
+                    {allProjectNames.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא / תת-נושא (רשות):</label>
+                  <input
+                    type="text"
+                    value={newTopic}
+                    onChange={(e) => setNewTopic(e.target.value)}
+                    placeholder="למשל: תוכנה, חומרה, בדיקות..."
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור המשימה (חובה):</label>
+                  <textarea
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="מה נדרש לבצע?"
+                    rows={3}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px', fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראים (רשות - כל שם בשורה נפרדת):</label>
+                  <textarea
+                    value={newAssignee}
+                    onChange={(e) => setNewAssignee(e.target.value)}
+                    placeholder="הקלד שמות, כל שם בשורה חדשה..."
+                    rows={2}
+                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px', fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד (רשות):</label>
+                    <input
+                      type="date"
+                      value={newDueDate}
+                      onChange={(e) => setNewDueDate(e.target.value)}
+                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>עדיפות:</label>
+                    <select
+                      value={newPriority}
+                      onChange={(e) => setNewPriority(e.target.value as any)}
+                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
+                    >
+                      <option value="גבוהה">גבוהה</option>
+                      <option value="בינונית">בינונית</option>
+                      <option value="נמוכה">נמוכה</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    שמור משימה
+                  </button>
+                  <button type="button" onClick={() => setShowAddTaskModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
                     ביטול
                   </button>
                 </div>
@@ -1327,7 +1434,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא (רשות):</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא:</label>
                   <input
                     type="text"
                     value={editingTask.topic}
@@ -1337,7 +1444,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור משימה (חובה):</label>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור משימה:</label>
                   <textarea
                     value={editingTask.description}
                     onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
@@ -1346,13 +1453,23 @@ export default function App() {
                   />
                 </div>
 
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראים (כל ששם בשורה נפרדת):</label>
+                  <textarea
+                    value={editingTask.assignee}
+                    onChange={(e) => setEditingTask({ ...editingTask, assignee: e.target.value })}
+                    rows={2}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }}
+                  />
+                </div>
+
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי (רשות):</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד:</label>
                     <input
-                      type="text"
-                      value={editingTask.assignee}
-                      onChange={(e) => setEditingTask({ ...editingTask, assignee: e.target.value })}
+                      type="date"
+                      value={editingTask.dueDate}
+                      onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
                       style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
                     />
                   </div>
@@ -1367,27 +1484,6 @@ export default function App() {
                       <option value="בינונית">בינונית</option>
                       <option value="נמוכה">נמוכה</option>
                     </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד (רשות):</label>
-                    <input
-                      type="date"
-                      value={editingTask.dueDate}
-                      onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>דחיות:</label>
-                    <input
-                      type="number"
-                      value={editingTask.delays || 0}
-                      onChange={(e) => setEditingTask({ ...editingTask, delays: parseInt(e.target.value) || 0 })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                    />
                   </div>
                 </div>
 
@@ -1495,97 +1591,77 @@ export default function App() {
           </div>
         )}
 
-        {/* מודאל משימה חדשה (שדות רשות) */}
-        {showAddTaskModal && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
-            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '520px', textAlign: 'right', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ margin: '0 0 18px 0', fontSize: '20px', fontWeight: '800' }}>הוספת משימה חדשה</h3>
-              <form onSubmit={handleCreateTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>פרויקט:</label>
-                  <select
-                    value={newProject}
-                    onChange={(e) => setNewProject(e.target.value)}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
-                  >
-                    {allProjectNames.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>נושא / תת-נושא (רשות):</label>
-                  <input
-                    type="text"
-                    value={newTopic}
-                    onChange={(e) => setNewTopic(e.target.value)}
-                    placeholder="למשל: תוכנה, חומרה, בדיקות..."
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור המשימה (חובה):</label>
-                  <textarea
-                    value={newDescription}
-                    onChange={(e) => setNewDescription(e.target.value)}
-                    placeholder="מה נדרש לבצע?"
-                    rows={3}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontSize: '14px', fontFamily: 'inherit' }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראי (רשות):</label>
-                    <input
-                      type="text"
-                      value={newAssignee}
-                      onChange={(e) => setNewAssignee(e.target.value)}
-                      placeholder="שם האחראי..."
-                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
-                    />
+        {/* 3. תצוגת דשבורד ומדדי צוות */}
+        {viewMode === 'dashboard' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
+            <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px', color: theme.textMain }}>👥 חלוקת עומס משימות לפי עובד</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Object.entries(dashboardMetrics.assigneeLoad).map(([assignee, count]) => (
+                  <div key={assignee} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{assignee}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '60%' }}>
+                      <div style={{ flex: 1, height: '8px', backgroundColor: theme.subCardBg, borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: `${(count / (tasks.length || 1)) * 100}%`, height: '100%', backgroundColor: '#2563eb' }} />
+                      </div>
+                      <span style={{ fontSize: '12px', fontWeight: 'bold' }}>{count}</span>
+                    </div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>עדיפות:</label>
-                    <select
-                      value={newPriority}
-                      onChange={(e) => setNewPriority(e.target.value as any)}
-                      style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', fontFamily: 'inherit' }}
-                    >
-                      <option value="גבוהה">גבוהה</option>
-                      <option value="בינונית">בינונית</option>
-                      <option value="נמוכה">נמוכה</option>
-                    </select>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px', color: theme.textMain }}>⏱️ ממוצע ימי איחור לפי פרויקט</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Object.entries(dashboardMetrics.projectDelays).map(([pName, val]) => (
+                  <div key={pName} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{pName}</span>
+                    <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '3px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold' }}>
+                      ממוצע: {Math.round(val.totalDelay / (val.count || 1))} ימים
+                    </span>
                   </div>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד (רשות):</label>
-                  <input
-                    type="date"
-                    value={newDueDate}
-                    onChange={(e) => setNewDueDate(e.target.value)}
-                    style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-                    שמור משימה
-                  </button>
-                  <button type="button" onClick={() => setShowAddTaskModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-                    ביטול
-                  </button>
-                </div>
-              </form>
+                ))}
+              </div>
             </div>
           </div>
         )}
 
-        {/* תצוגה ראשית */}
-        {allProjectNames
-          .filter((p) => selectedProjects.length === 0 || selectedProjects.includes(p))
+        {/* 4. תצוגת יומן */}
+        {viewMode === 'calendar' && (
+          <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}`, marginBottom: '28px', overflowX: 'auto' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>📅 לוח משימות חודשי לפי תאריך יעד</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(130px, 1fr))', gap: '8px' }}>
+              {['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'].map((d) => (
+                <div key={d} style={{ textAlign: 'center', fontWeight: 'bold', padding: '8px', backgroundColor: theme.subCardBg, borderRadius: '8px' }}>
+                  יום {d}'
+                </div>
+              ))}
+              {Array.from({ length: 30 }).map((_, i) => {
+                const dayNum = i + 1;
+                const dayStr = dayNum.toString().padStart(2, '0');
+                const matchingTasks = filteredTasks.filter((t) => t.dueDate.endsWith(`-${dayStr}`));
+
+                return (
+                  <div key={i} style={{ minHeight: '100px', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '8px', border: `1px solid ${theme.border}` }}>
+                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: theme.textMuted, marginBottom: '4px' }}>{dayNum}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {matchingTasks.map((t) => (
+                        <div key={t.id} style={{ fontSize: '10px', padding: '3px 5px', borderRadius: '4px', backgroundColor: getProjectColor(t.project), color: '#fff', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {t.description}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* תצוגה ראשית (טבלה או כרטיסיות לפי הפרויקט הנבחר בבורר) */}
+        {(viewMode === 'table' || viewMode === 'cards') && allProjectNames
+          .filter((p) => selectedProjectFilter === 'הכל' || selectedProjectFilter === p)
           .map((projectName) => {
             const projectTasks = filteredTasks.filter((t) => t.project === projectName);
             const projectDoc = projects.find((p) => p.name === projectName);
@@ -1643,7 +1719,7 @@ export default function App() {
                           {userRole === 'מנהל' && <th style={{ width: '30px' }}></th>}
                           <th style={{ padding: '14px 16px', width: '110px' }}>נושא</th>
                           <th style={{ padding: '14px 16px', minWidth: '240px' }}>תיאור המשימה</th>
-                          <th style={{ padding: '14px 12px', width: '110px' }}>אחראי</th>
+                          <th style={{ padding: '14px 12px', width: '130px' }}>אחראים</th>
                           <th
                             onClick={() => handleSort('priority')}
                             style={{ padding: '14px 10px', width: '85px', cursor: 'pointer', userSelect: 'none' }}
@@ -1710,7 +1786,6 @@ export default function App() {
                                 )}
                               </td>
 
-                              {/* תיאור משימה + פלוס קטן להוספת תת-משימה */}
                               <td style={{ padding: '14px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                                   <span style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', lineHeight: '1.4' }}>
@@ -1800,11 +1875,18 @@ export default function App() {
                                 )}
                               </td>
 
+                              {/* שמות אחראים אחד מעל השני */}
                               <td style={{ padding: '14px 12px' }}>
                                 {t.assignee ? (
-                                  <span style={{ backgroundColor: theme.subCardBg, padding: '4px 10px', borderRadius: '12px', fontSize: '12px', color: theme.textMain, fontWeight: '700' }}>
-                                    👤 {t.assignee}
-                                  </span>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                    {t.assignee.split('\n').map((name, i) => (
+                                      name.trim() ? (
+                                        <span key={i} style={{ backgroundColor: theme.subCardBg, padding: '3px 8px', borderRadius: '8px', fontSize: '12px', color: theme.textMain, fontWeight: '700', display: 'inline-block', width: 'fit-content' }}>
+                                          👤 {name.trim()}
+                                        </span>
+                                      ) : null
+                                    ))}
+                                  </div>
                                 ) : (
                                   <span style={{ color: theme.textMuted, fontSize: '12px' }}>-</span>
                                 )}
@@ -1980,7 +2062,6 @@ export default function App() {
                                 )}
                               </td>
 
-                              {/* פעולות מנהל */}
                               {userRole === 'מנהל' && (
                                 <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                   <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
@@ -2209,9 +2290,9 @@ export default function App() {
 
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '12px', color: theme.textMuted }}>
                             {t.assignee && (
-                              <span style={{ backgroundColor: theme.cardBg, padding: '3px 8px', borderRadius: '10px', fontWeight: '700', color: theme.textMain }}>
-                                👤 {t.assignee}
-                              </span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', backgroundColor: theme.cardBg, padding: '4px 8px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                                {t.assignee.split('\n').map((name, i) => name.trim() ? <span key={i} style={{ fontWeight: '700', color: theme.textMain }}>👤 {name.trim()}</span> : null)}
+                              </div>
                             )}
                             {t.dueDate && <span>📅 יעד: {t.dueDate}</span>}
                             {delayDays > 0 && (
@@ -2269,7 +2350,6 @@ export default function App() {
                             )}
                           </div>
 
-                          {/* פעולות מנהל בכרטיסייה */}
                           {userRole === 'מנהל' && (
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', borderTop: `1px solid ${theme.border}`, paddingTop: '8px' }}>
                               
