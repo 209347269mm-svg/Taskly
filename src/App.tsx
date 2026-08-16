@@ -8,6 +8,7 @@ import {
   onSnapshot,
   deleteDoc,
   doc,
+  setDoc,
   updateDoc,
   serverTimestamp,
   orderBy
@@ -40,32 +41,41 @@ interface ProjectDoc {
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
+  
+  // שדות התחברות
   const [nameInput, setNameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
   const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
+  const [authError, setAuthError] = useState('');
+
+  // סיסמת מנהל מהשרת
+  const [adminPassword, setAdminPassword] = useState('1234');
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [newAdminPasswordInput, setNewAdminPasswordInput] = useState('');
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
   const [selectedFilterProject, setSelectedFilterProject] = useState('כל הפרויקטים');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // מודאלים וטפסים
+  // מודאלים
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
 
-  // נתוני משימה חדשה
+  // משימה חדשה
   const [newProject, setNewProject] = useState('');
   const [newTopic, setNewTopic] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
   const [newDueDate, setNewDueDate] = useState('');
 
-  // נתוני פרויקט חדש
+  // פרויקט חדש
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
-  // הזנת הערה זמנית
+  // הערות
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
 
-  // כניסה אנונימית
+  // 1. חיבור אנונימי ברקע ל-Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) {
@@ -75,7 +85,25 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // טעינת פרויקטים
+  // 2. סנכרון סיסמת מנהל מ-Firestore בזמן אמת
+  useEffect(() => {
+    const docRef = doc(db, 'settings', 'admin_config');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.adminPassword) {
+          setAdminPassword(data.adminPassword);
+        }
+      } else {
+        // יצירת סיסמת ברירת מחדל אם טרם הוגדרה
+        setDoc(docRef, { adminPassword: '1234' }).catch((err) => console.error("Set default password error:", err));
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 3. טעינת פרויקטים
   useEffect(() => {
     const q = query(collection(db, 'projects_list'), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -92,7 +120,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // טעינת משימות
+  // 4. טעינת משימות
   useEffect(() => {
     const q = query(collection(db, 'tasks'), orderBy('startDate', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -108,7 +136,21 @@ export default function App() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameInput.trim()) return;
+    setAuthError('');
+
+    if (!nameInput.trim()) {
+      setAuthError('נא להזין שם מלא או שם משתמש.');
+      return;
+    }
+
+    // בדיקת סיסמה אך ורק למנהל
+    if (roleInput === 'מנהל') {
+      if (passwordInput !== adminPassword) {
+        setAuthError('סיסמת מנהל שגויה.');
+        return;
+      }
+    }
+
     localStorage.setItem('taskly_user', nameInput.trim());
     localStorage.setItem('taskly_role', roleInput);
     setCurrentUser(nameInput.trim());
@@ -119,6 +161,23 @@ export default function App() {
     localStorage.removeItem('taskly_user');
     localStorage.removeItem('taskly_role');
     setCurrentUser(null);
+    setPasswordInput('');
+    setAuthError('');
+  };
+
+  // עדכון סיסמת מנהל
+  const handleUpdateAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newAdminPasswordInput.trim();
+    if (!trimmed) return;
+
+    await setDoc(doc(db, 'settings', 'admin_config'), {
+      adminPassword: trimmed
+    }, { merge: true });
+
+    alert('סיסמת המנהל עודכנה בהצלחה!');
+    setNewAdminPasswordInput('');
+    setShowPasswordChangeModal(false);
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -224,48 +283,69 @@ export default function App() {
           </div>
 
           <h2 className="text-2xl font-black text-slate-900 mb-2">כניסה לאפליקציה</h2>
-          <p className="text-sm text-slate-500 mb-8">הזן את שמך ובחר את סוג החשבון להתחברות</p>
+          <p className="text-sm text-slate-500 mb-6">הזן את שמך ובחר את סוג החשבון</p>
 
-          <form onSubmit={handleLogin} className="text-right space-y-5">
+          {authError && (
+            <div className="mb-5 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold text-right">
+              ⚠️ {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="text-right space-y-4">
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-slate-700 mb-1.5">
                 שם מלא / שם משתמש
               </label>
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם מלא..."
+                placeholder="הזן שם..."
                 autoFocus
-                className="w-full px-4 py-3.5 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-base transition-all"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-sm transition-all"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-slate-700 mb-1.5">
                 סוג הרשאה
               </label>
               <div className="flex bg-slate-100 p-1.5 rounded-xl">
                 <button
                   type="button"
                   onClick={() => setRoleInput('משתמש')}
-                  className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${roleInput === 'משתמש' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${roleInput === 'משתמש' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                 >
-                  משתמש
+                  משתמש (כניסה ישירה)
                 </button>
                 <button
                   type="button"
                   onClick={() => setRoleInput('מנהל')}
-                  className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${roleInput === 'מנהל' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${roleInput === 'מנהל' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                 >
-                  מנהל
+                  מנהל (דרושה סיסמה)
                 </button>
               </div>
             </div>
 
+            {roleInput === 'מנהל' && (
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                  סיסמת מנהל
+                </label>
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="הזן סיסמת מנהל..."
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-sm transition-all"
+                />
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full py-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-base shadow-lg shadow-blue-600/30 transition-all mt-4"
+              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-base shadow-lg shadow-blue-600/30 transition-all mt-4"
             >
               התחבר למערכת
             </button>
@@ -288,6 +368,16 @@ export default function App() {
               <span className="font-bold text-slate-800 text-sm">👤 {currentUser}</span>
               <span className="text-xs bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-md">{userRole}</span>
             </div>
+
+            {userRole === 'מנהל' && (
+              <button
+                onClick={() => setShowPasswordChangeModal(true)}
+                className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
+              >
+                🔑 שינוי סיסמת מנהל
+              </button>
+            )}
+
             <button
               onClick={handleLogout}
               className="px-3.5 py-2 rounded-xl border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 text-xs font-bold transition-colors"
@@ -329,12 +419,14 @@ export default function App() {
             className="flex-1 min-w-[220px] px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-blue-500 shadow-sm"
           />
 
-          <button
-            onClick={() => setShowAddProjectModal(true)}
-            className="px-4 py-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all shadow-sm"
-          >
-            📁 + פרויקט חדש
-          </button>
+          {userRole === 'מנהל' && (
+            <button
+              onClick={() => setShowAddProjectModal(true)}
+              className="px-4 py-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all shadow-sm"
+            >
+              📁 + פרויקט חדש
+            </button>
+          )}
 
           <button
             onClick={() => setShowAddTaskModal(true)}
@@ -343,6 +435,34 @@ export default function App() {
             + משימה חדשה
           </button>
         </div>
+
+        {/* מודאל שינוי סיסמת מנהל */}
+        {showPasswordChangeModal && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl text-right">
+              <h3 className="text-lg font-bold text-slate-900 mb-2">שינוי סיסמת מנהל</h3>
+              <p className="text-xs text-slate-500 mb-4">הסיסמה החדשה תישמר בענן עבור כל המנהלים</p>
+              <form onSubmit={handleUpdateAdminPassword} className="space-y-4">
+                <input
+                  type="text"
+                  value={newAdminPasswordInput}
+                  onChange={(e) => setNewAdminPasswordInput(e.target.value)}
+                  placeholder="הקלד סיסמה חדשה..."
+                  autoFocus
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-blue-500 text-sm"
+                />
+                <div className="flex gap-2">
+                  <button type="submit" className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-sm">
+                    שמור סיסמה
+                  </button>
+                  <button type="button" onClick={() => setShowPasswordChangeModal(false)} className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-sm">
+                    ביטול
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* מודאל פרויקט חדש */}
         {showAddProjectModal && (
@@ -466,7 +586,7 @@ export default function App() {
                     <span className="text-xs text-slate-400">({projectTasks.length} משימות)</span>
                   </div>
 
-                  {projectDoc && (
+                  {projectDoc && userRole === 'מנהל' && (
                     <button
                       onClick={() => handleDeleteProject(projectDoc.id, projectDoc.name)}
                       className="text-xs text-slate-400 hover:text-red-400 transition-colors"
@@ -566,13 +686,15 @@ export default function App() {
                             </td>
 
                             <td className="py-3.5 px-3 text-center">
-                              <button
-                                onClick={() => handleDeleteTask(t.id)}
-                                className="text-slate-400 hover:text-red-500 font-bold p-1 transition-colors"
-                                title="מחק משימה"
-                              >
-                                ✕
-                              </button>
+                              {userRole === 'מנהל' && (
+                                <button
+                                  onClick={() => handleDeleteTask(t.id)}
+                                  className="text-slate-400 hover:text-red-500 font-bold p-1 transition-colors"
+                                  title="מחק משימה"
+                                >
+                                  ✕
+                                </button>
+                              )}
                             </td>
 
                           </tr>
