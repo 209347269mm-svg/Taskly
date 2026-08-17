@@ -101,9 +101,6 @@ export default function App() {
 
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
   const [isManagerOnlyNote, setIsManagerOnlyNote] = useState<{ [taskId: string]: boolean }>({});
-  const [editingNote, setEditingNote] = useState<{ taskId: string; noteId: string; text: string; isManagerOnly?: boolean } | null>(null);
-  const [activeSubTaskInputTaskId, setActiveSubTaskInputTaskId] = useState<string | null>(null);
-  const [subTaskText, setSubTaskText] = useState('');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -200,14 +197,6 @@ export default function App() {
     return diffDays > 0 ? diffDays : 0;
   };
 
-  const isDueSoon = (dueDate: string, status: string) => {
-    if (!dueDate || status === 'הושלם') return false;
-    const due = new Date(dueDate).getTime();
-    const today = new Date().setHours(0, 0, 0, 0);
-    const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
-    return diffDays >= 0 && diffDays <= 1;
-  };
-
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -232,16 +221,6 @@ export default function App() {
     setPasswordInput('');
     setAuthError('');
     setIsUserMenuOpen(false);
-  };
-
-  const handleUpdateAdminPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newAdminPasswordInput.trim();
-    if (!trimmed) return;
-    await setDoc(doc(db, 'settings', 'admin_config'), { adminPassword: trimmed }, { merge: true });
-    alert('סיסמת המנהל עודכנה בהצלחה!');
-    setNewAdminPasswordInput('');
-    setShowPasswordChangeModal(false);
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -304,52 +283,6 @@ export default function App() {
     }
   };
 
-  const handleDuplicateTask = async (task: Task) => {
-    if (userRole !== 'מנהל') return;
-    const todayStr = new Date().toISOString().split('T')[0];
-    const clonedSubtasks = (task.subtasks || []).map((s) => ({
-      id: `sub_${Date.now()}_${Math.random()}`,
-      text: s.text,
-      completed: false
-    }));
-    await addDoc(collection(db, 'tasks'), {
-      project: task.project,
-      topic: task.topic || '',
-      description: `${task.description} (העתק)`,
-      assignee: task.assignee || '',
-      startDate: todayStr,
-      dueDate: task.dueDate || '',
-      completedDate: '',
-      delays: 0,
-      priority: task.priority,
-      isArchived: false,
-      isDeleted: false,
-      orderIndex: Date.now(),
-      status: 'פתוח',
-      notes: [],
-      subtasks: clonedSubtasks,
-      createdAt: serverTimestamp()
-    });
-  };
-
-  const handleSaveEditedTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingTask || userRole !== 'מנהל') return;
-    await updateDoc(doc(db, 'tasks', editingTask.id), {
-      project: editingTask.project,
-      topic: editingTask.topic || '',
-      description: editingTask.description,
-      assignee: editingTask.assignee || '',
-      startDate: editingTask.startDate,
-      dueDate: editingTask.dueDate || '',
-      completedDate: editingTask.completedDate || '',
-      delays: editingTask.delays || 0,
-      priority: editingTask.priority,
-      status: editingTask.status
-    });
-    setEditingTask(null);
-  };
-
   const handleAddNote = async (taskId: string) => {
     const text = noteInputs[taskId]?.trim();
     if (!text) return;
@@ -372,49 +305,6 @@ export default function App() {
     setNoteInputs({ ...noteInputs, [taskId]: '' });
   };
 
-  const handleSaveEditedNote = async () => {
-    if (!editingNote || !editingNote.text.trim()) return;
-    const task = tasks.find((t) => t.id === editingNote.taskId);
-    if (!task) return;
-    const updatedNotes = (task.notes || []).map((n) =>
-      n.id === editingNote.noteId ? { ...n, text: editingNote.text.trim(), isManagerOnly: editingNote.isManagerOnly } : n
-    );
-    await updateDoc(doc(db, 'tasks', editingNote.taskId), { notes: updatedNotes });
-    setEditingNote(null);
-  };
-
-  const handleDeleteNote = async (taskId: string, noteId: string) => {
-    if (!window.confirm("למחוק הערה זו?")) return;
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    const updatedNotes = (task.notes || []).filter((n) => n.id !== noteId);
-    await updateDoc(doc(db, 'tasks', taskId), { notes: updatedNotes });
-  };
-
-  const handleAddSubTaskDirect = async (taskId: string) => {
-    if (!subTaskText.trim()) return;
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    const updatedSubtasks = [...(task.subtasks || []), { id: `sub_${Date.now()}`, text: subTaskText.trim(), completed: false }];
-    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
-    setSubTaskText('');
-    setActiveSubTaskInputTaskId(null);
-  };
-
-  const handleToggleSubTask = async (taskId: string, subtaskId: string, currentStatus: boolean) => {
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    const updatedSubtasks = (task.subtasks || []).map((s) => s.id === subtaskId ? { ...s, completed: !currentStatus } : s);
-    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
-  };
-
-  const handleDeleteSubTask = async (taskId: string, subtaskId: string) => {
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    const updatedSubtasks = (task.subtasks || []).filter((s) => s.id !== subtaskId);
-    await updateDoc(doc(db, 'tasks', taskId), { subtasks: updatedSubtasks });
-  };
-
   const handleStatusChange = async (taskId: string, newStatus: 'פתוח' | 'בביצוע' | 'הושלם' | 'נדחה') => {
     const todayStr = new Date().toISOString().split('T')[0];
     const now = new Date();
@@ -431,69 +321,6 @@ export default function App() {
       completedDate: newStatus === 'הושלם' ? todayStr : '',
       notes: [...(task?.notes || []), auditNote]
     });
-  };
-
-  const handleIncrementDelay = async (taskId: string, currentDelays: number) => {
-    if (userRole !== 'מנהל') return;
-    await updateDoc(doc(db, 'tasks', taskId), { delays: (currentDelays || 0) + 1 });
-  };
-
-  const handleToggleArchive = async (taskId: string, currentArchived: boolean) => {
-    if (userRole !== 'מנהל') return;
-    await updateDoc(doc(db, 'tasks', taskId), { isArchived: !currentArchived });
-  };
-
-  const handleArchiveAllCompleted = async () => {
-    if (userRole !== 'מנהל') return;
-    const completedTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived && t.status === 'הושלם');
-    if (completedTasks.length === 0) {
-      alert("אין משימות שהושלמו להעברה לארכיון.");
-      return;
-    }
-    if (!window.confirm(`האם להעביר ${completedTasks.length} משימות שהושלמו לארכיון?`)) return;
-    completedTasks.forEach(async (t) => {
-      await updateDoc(doc(db, 'tasks', t.id), { isArchived: true });
-    });
-  };
-
-  const handleToggleTrash = async (taskId: string, currentDeleted: boolean) => {
-    if (userRole !== 'מנהל') return;
-    await updateDoc(doc(db, 'tasks', taskId), { isDeleted: !currentDeleted });
-  };
-
-  const handlePermanentDelete = async (taskId: string) => {
-    if (userRole !== 'מנהל') return;
-    if (!window.confirm("למחוק משימה זו לצמיתות?")) return;
-    await deleteDoc(doc(db, 'tasks', taskId));
-  };
-
-  const handleEmptyTrash = async () => {
-    if (userRole !== 'מנהל') return;
-    const trashTasks = tasks.filter((t) => t.isDeleted);
-    if (trashTasks.length === 0) return;
-    if (!window.confirm(`לרוקן את סל המחזור (${trashTasks.length} משימות)?`)) return;
-    trashTasks.forEach(async (t) => {
-      await deleteDoc(doc(db, 'tasks', t.id));
-    });
-  };
-
-  const handleDragStart = (taskId: string) => {
-    if (userRole !== 'מנהל') return;
-    setDraggedTaskId(taskId);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = async (targetTaskId: string) => {
-    if (!draggedTaskId || draggedTaskId === targetTaskId || userRole !== 'מנהל') return;
-    const targetTask = tasks.find((t) => t.id === targetTaskId);
-    if (!targetTask) return;
-    await updateDoc(doc(db, 'tasks', draggedTaskId), {
-      orderIndex: (targetTask.orderIndex || 0) + 1
-    });
-    setDraggedTaskId(null);
   };
 
   const handleExportCSV = () => {
@@ -559,7 +386,6 @@ export default function App() {
       const matchProject = selectedProjectFilter === 'הכל' || t.project === selectedProjectFilter;
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
       
-      // סינון עדיפות מדויק: אם נבחרה עדיפות מסוימת, המשימה חייבת להיות בעלת אותה עדיפות וגם בעלת נושא קיים
       const matchPriority = priorityFilter === 'הכל' || (t.priority === priorityFilter && t.topic && t.topic.trim() !== '');
 
       const matchSearch = searchTerm === '' ||
@@ -602,6 +428,28 @@ export default function App() {
     };
   }, [tasks]);
 
+  const dashboardMetrics = useMemo(() => {
+    const active = tasks.filter((t) => !t.isDeleted && !t.isArchived);
+    const assigneeLoad: { [key: string]: number } = {};
+    active.forEach((t) => {
+      if (!t.assignee) return;
+      t.assignee.split('\n').map(n => n.trim()).filter(Boolean).forEach(name => {
+        assigneeLoad[name] = (assigneeLoad[name] || 0) + 1;
+      });
+    });
+
+    const projectDelays: { [key: string]: { totalDelay: number; count: number } } = {};
+    active.forEach((t) => {
+      if (!projectDelays[t.project]) projectDelays[t.project] = { totalDelay: 0, count: 0 };
+      const delay = calculateDelayDays(t.dueDate, t.status, t.completedDate);
+      if (delay > 0) {
+        projectDelays[t.project].totalDelay += delay;
+        projectDelays[t.project].count += 1;
+      }
+    });
+    return { assigneeLoad, projectDelays };
+  }, [tasks]);
+
   const theme = {
     bg: isDarkMode ? '#090d16' : '#f8fafc',
     cardBg: isDarkMode ? '#111827' : '#ffffff',
@@ -618,10 +466,7 @@ export default function App() {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, padding: '20px', direction: 'rtl', fontFamily: FONT_FAMILY, transition: 'background-color 0.2s', position: 'relative' }}>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&display=swap" />
         
-        <button
-          onClick={() => setIsDarkMode(!isDarkMode)}
-          style={{ position: 'absolute', top: '20px', right: '20px', padding: '8px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
-        >
+        <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ position: 'absolute', top: '20px', right: '20px', padding: '8px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.cardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
           {isDarkMode ? '☀️ בהיר' : '🌙 כהה'}
         </button>
 
@@ -631,9 +476,7 @@ export default function App() {
           <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0' }}>ניהול ומעקב משימות ופרויקטים</p>
 
           {authError && (
-            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>
-              ⚠️ {authError}
-            </div>
+            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>⚠️ {authError}</div>
           )}
 
           <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -731,7 +574,7 @@ export default function App() {
           </div>
         )}
 
-        {/* בורר פרויקטים ותצוגות (זמין גם למשתמש וגם למנהל) */}
+        {/* בורר פרויקטים ותצוגות */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -790,7 +633,7 @@ export default function App() {
           )}
         </div>
 
-        {/* מודאל פרויקט חדש (ללא סוגריים) */}
+        {/* מודאל פרויקט חדש */}
         {showAddProjectModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '420px', border: `1px solid ${theme.border}` }}>
@@ -806,7 +649,7 @@ export default function App() {
           </div>
         )}
 
-        {/* מודאל משימה חדשה (ללא סוגריים בכלל) */}
+        {/* מודאל משימה חדשה */}
         {showAddTaskModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '520px', border: `1px solid ${theme.border}` }}>
@@ -853,27 +696,78 @@ export default function App() {
           </div>
         )}
 
-        {/* תצוגה ראשית (טבלה, כרטיסיות, יומן, דשבורד - פועל תמיד גם למשתמש רגיל) */}
+        {/* תצוגת דשבורד מעוצבת */}
         {viewMode === 'dashboard' ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
             <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>👥 חלוקת עומס משימות לפי עובד</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {Object.entries(dashboardMetrics.assigneeLoad).map(([assignee, count]) => (
-                  <div key={assignee} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{assignee}</span>
-                    <span style={{ fontSize: '12px', fontWeight: 'bold' }}>{count} משימות</span>
-                  </div>
-                ))}
+              <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px', color: theme.textMain }}>👥 עומס משימות לפי אחראי</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {Object.keys(dashboardMetrics.assigneeLoad).length === 0 ? (
+                  <p style={{ color: theme.textMuted, fontSize: '13px' }}>אין משימות משויכות לאחראים כרגע.</p>
+                ) : (
+                  Object.entries(dashboardMetrics.assigneeLoad).map(([name, count]) => (
+                    <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', backgroundColor: theme.subCardBg, borderRadius: '10px', border: `1px solid ${theme.border}` }}>
+                      <span style={{ fontWeight: '700', fontSize: '14px' }}>👤 {name}</span>
+                      <span style={{ backgroundColor: '#2563eb', color: '#fff', padding: '2px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>{count} משימות</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px', color: theme.textMain }}>⏱️ איחורים ממוצעים לפי פרויקט</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {Object.keys(dashboardMetrics.projectDelays).length === 0 ? (
+                  <p style={{ color: theme.textMuted, fontSize: '13px' }}>אין איחורים בפרויקטים.</p>
+                ) : (
+                  Object.entries(dashboardMetrics.projectDelays).map(([pName, val]) => {
+                    const avg = Math.round(val.totalDelay / (val.count || 1));
+                    return (
+                      <div key={pName} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', backgroundColor: theme.subCardBg, borderRadius: '10px', border: `1px solid ${theme.border}` }}>
+                        <span style={{ fontWeight: '700', fontSize: '14px' }}>📁 {pName}</span>
+                        <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>ממוצע {avg} ימי איחור</span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
         ) : viewMode === 'calendar' ? (
+          
+          /* תצוגת יומן חודשי אינטראקטיבי */
           <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}`, marginBottom: '28px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '16px' }}>📅 לוח משימות חודשי</h3>
-            <p style={{ color: theme.textMuted }}>תצוגת היומן פעילה ומוצגת בהתאם לתאריכי היעד של המשימות.</p>
+            <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '16px', color: theme.textMain }}>📅 לוח משימות חודשי לפי תאריך יעד</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(130px, 1fr))', gap: '10px' }}>
+              {['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'].map((d) => (
+                <div key={d} style={{ textAlign: 'center', fontWeight: 'bold', padding: '10px', backgroundColor: theme.subCardBg, borderRadius: '8px', color: theme.textMuted, fontSize: '13px' }}>
+                  יום {d}
+                </div>
+              ))}
+              {Array.from({ length: 31 }).map((_, i) => {
+                const dayNum = i + 1;
+                const dayStr = dayNum.toString().padStart(2, '0');
+                const matchingTasks = filteredTasks.filter((t) => t.dueDate && t.dueDate.endsWith(`-${dayStr}`));
+
+                return (
+                  <div key={i} style={{ minHeight: '110px', backgroundColor: theme.subCardBg, borderRadius: '12px', padding: '10px', border: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: theme.textMuted }}>{dayNum} לחודש</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflowY: 'auto', maxHeight: '90px' }}>
+                      {matchingTasks.map((t) => (
+                        <div key={t.id} style={{ fontSize: '11px', padding: '4px 6px', borderRadius: '6px', backgroundColor: getProjectColor(t.project), color: '#fff', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.description}>
+                          [{t.project}] {t.description}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : (
+          
+          /* תצוגת טבלה או כרטיסיות הרגילה */
           allProjectNames
             .filter((p) => selectedProjectFilter === 'הכל' || selectedProjectFilter === p)
             .map((projectName) => {
@@ -987,17 +881,44 @@ export default function App() {
                   ) : (
                     
                     <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
-                      {projectTasks.map((t) => (
-                        <div key={t.id} style={{ backgroundColor: theme.subCardBg, border: `1.5px solid ${theme.border}`, borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          <div style={{ fontSize: '15px', fontWeight: '700' }}>{t.description}</div>
-                          {userRole === 'מנהל' && (
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
-                              <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px' }}>✏️ ערוך</button>
-                              <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', color: '#dc2626' }}>🗑️ מחק</button>
+                      {projectTasks.map((t) => {
+                        const isCompleted = t.status === 'הושלם';
+                        return (
+                          <div key={t.id} style={{ backgroundColor: theme.subCardBg, border: `1.5px solid ${theme.border}`, borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ backgroundColor: `${pColor}15`, color: pColor, fontWeight: '800', fontSize: '12px', padding: '3px 8px', borderRadius: '6px' }}>{t.topic || 'כללי'}</span>
+                              <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '800', backgroundColor: t.priority === 'גבוהה' ? '#fee2e2' : t.priority === 'בינונית' ? '#ffedd5' : '#dcfce7', color: t.priority === 'גבוהה' ? '#dc2626' : t.priority === 'בינונית' ? '#ea580c' : '#16a34a' }}>{t.priority}</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+
+                            <div style={{ fontSize: '15px', fontWeight: '700', textDecoration: isCompleted ? 'line-through' : 'none' }}>{t.description}</div>
+
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '12px', color: theme.textMuted }}>
+                              {t.assignee && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', backgroundColor: theme.cardBg, padding: '4px 8px', borderRadius: '8px', border: `1px solid ${theme.border}` }}>
+                                  {t.assignee.split('\n').map((name, i) => name.trim() ? <span key={i} style={{ fontWeight: '700', color: theme.textMain }}>👤 {name.trim()}</span> : null)}
+                                </div>
+                              )}
+                              {t.dueDate && <span>📅 יעד: {t.dueDate}</span>}
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${theme.border}`, paddingTop: '10px' }}>
+                              <select value={t.status} onChange={(e) => handleStatusChange(t.id, e.target.value as any)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', fontSize: '11px', fontWeight: '800', backgroundColor: t.status === 'הושלם' ? '#dcfce7' : t.status === 'נדחה' ? '#fee2e2' : '#e0f2fe', color: t.status === 'הושלם' ? '#166534' : t.status === 'נדחה' ? '#b91c1c' : '#0369a1' }}>
+                                <option value="פתוח">פתוח</option>
+                                <option value="בביצוע">בביצוע</option>
+                                <option value="הושלם">הושלם</option>
+                                <option value="נדחה">נדחה</option>
+                              </select>
+
+                              {userRole === 'מנהל' && (
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                  <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>✏️ ערוך</button>
+                                  <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
