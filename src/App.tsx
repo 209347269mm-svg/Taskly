@@ -18,6 +18,7 @@ interface NoteItem {
   text: string;
   author: string;
   time: string;
+  isManagerOnly?: boolean;
 }
 
 interface SubTask {
@@ -56,7 +57,8 @@ const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'S
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
-  const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
+  // כל המשתמשים מוגדרים כמנהלים
+  const userRole = 'מנהל';
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
   const [nameInput, setNameInput] = useState('');
@@ -97,7 +99,10 @@ export default function App() {
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
-  const [subTaskInputs, setSubTaskInputs] = useState<{ [taskId: string]: string }>({});
+  
+  const [activeSubTaskAddingId, setActiveSubTaskAddingId] = useState<string | null>(null);
+  const [subTaskTextInputs, setSubTaskTextInputs] = useState<{ [taskId: string]: string }>({});
+
   const [editingNote, setEditingNote] = useState<{ taskId: string; noteId: string; text: string } | null>(null);
 
   useEffect(() => {
@@ -188,11 +193,9 @@ export default function App() {
       setAuthError('נא להזין שם משתמש.');
       return;
     }
-    const role = username.toLowerCase() === 'מנהל' ? 'מנהל' : 'משתמש';
     localStorage.setItem('taskly_user', username);
-    localStorage.setItem('taskly_role', role);
+    localStorage.setItem('taskly_role', 'מנהל');
     setCurrentUser(username);
-    setUserRole(role);
     setNameInput('');
   };
 
@@ -206,7 +209,6 @@ export default function App() {
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (userRole !== 'מנהל') return;
     const trimmed = newProjectNameInput.trim();
     if (!trimmed) return;
     await addDoc(collection(db, 'projects_list'), {
@@ -220,14 +222,12 @@ export default function App() {
   };
 
   const handleDeleteProject = async (projectId: string, projectName: string) => {
-    if (userRole !== 'מנהל') return;
     if (!window.confirm(`האם למחוק את הפרויקט "${projectName}"?`)) return;
     await deleteDoc(doc(db, 'projects_list', projectId));
   };
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (userRole !== 'מנהל') return;
     if (!newDescription || !newDescription.trim()) {
       alert("נא להזין תיאור משימה.");
       return;
@@ -266,7 +266,7 @@ export default function App() {
 
   const handleSaveEditedTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingTask || userRole !== 'מנהל') return;
+    if (!editingTask) return;
     await updateDoc(doc(db, 'tasks', editingTask.id), {
       project: editingTask.project,
       topic: editingTask.topic || '',
@@ -280,7 +280,6 @@ export default function App() {
   };
 
   const handleDuplicateTask = async (task: Task) => {
-    if (userRole !== 'מנהל') return;
     try {
       await addDoc(collection(db, 'tasks'), {
         project: task.project,
@@ -307,7 +306,6 @@ export default function App() {
   };
 
   const handleToggleArchive = async (taskId: string, currentValue: boolean) => {
-    if (userRole !== 'מנהל') return;
     try {
       await updateDoc(doc(db, 'tasks', taskId), {
         isArchived: !currentValue,
@@ -320,7 +318,6 @@ export default function App() {
   };
 
   const handleToggleTrash = async (taskId: string, currentValue: boolean) => {
-    if (userRole !== 'מנהל') return;
     try {
       await updateDoc(doc(db, 'tasks', taskId), {
         isDeleted: !currentValue,
@@ -333,7 +330,6 @@ export default function App() {
   };
 
   const handlePermanentDelete = async (taskId: string) => {
-    if (userRole !== 'מנהל') return;
     if (!window.confirm("למחוק משימה זו לצמיתות?")) return;
     try {
       await deleteDoc(doc(db, 'tasks', taskId));
@@ -343,7 +339,7 @@ export default function App() {
     }
   };
 
-  // ניהול הערות (הוספה, עריכה, מחיקה)
+  // הערות
   const handleAddNote = async (taskId: string) => {
     const text = noteInputs[taskId]?.trim();
     if (!text) return;
@@ -366,7 +362,6 @@ export default function App() {
   };
 
   const handleDeleteNote = async (taskId: string, noteId: string) => {
-    if (userRole !== 'מנהל') return;
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     const newNotes = task.notes.filter(n => n.id !== noteId);
@@ -382,9 +377,9 @@ export default function App() {
     setEditingNote(null);
   };
 
-  // ניהול תת-משימות
+  // תת-משימות
   const handleAddSubTask = async (taskId: string) => {
-    const text = subTaskInputs[taskId]?.trim();
+    const text = subTaskTextInputs[taskId]?.trim();
     if (!text) return;
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
@@ -396,7 +391,8 @@ export default function App() {
     }];
 
     await updateDoc(doc(db, 'tasks', taskId), { subtasks: newSubtasks });
-    setSubTaskInputs({ ...subTaskInputs, [taskId]: '' });
+    setSubTaskTextInputs({ ...subTaskTextInputs, [taskId]: '' });
+    setActiveSubTaskAddingId(null);
   };
 
   const handleToggleSubTask = async (taskId: string, subId: string) => {
@@ -407,13 +403,13 @@ export default function App() {
   };
 
   const handleDeleteSubTask = async (taskId: string, subId: string) => {
-    if (userRole !== 'מנהל') return;
     const task = tasks.find((t) => t.id === taskId);
     if (!task) return;
     const newSubtasks = task.subtasks.filter(s => s.id !== subId);
     await updateDoc(doc(db, 'tasks', taskId), { subtasks: newSubtasks });
   };
 
+  // שינוי סטטוס - אם הושלם, עובר אוטומטית לארכיון
   const handleStatusChange = async (taskId: string, newStatus: 'פתוח' | 'בביצוע' | 'הושלם' | 'נדחה') => {
     const todayStr = new Date().toISOString().split('T')[0];
     const now = new Date();
@@ -425,11 +421,18 @@ export default function App() {
       author: 'מערכת',
       time: formattedDate
     };
-    await updateDoc(doc(db, 'tasks', taskId), {
+
+    const updateData: any = {
       status: newStatus,
       completedDate: newStatus === 'הושלם' ? todayStr : '',
       notes: [...(task?.notes || []), auditNote]
-    });
+    };
+
+    if (newStatus === 'הושלם') {
+      updateData.isArchived = true;
+    }
+
+    await updateDoc(doc(db, 'tasks', taskId), updateData);
   };
 
   const handleExportCSV = () => {
@@ -602,7 +605,7 @@ export default function App() {
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם משתמש (למשל: משה, או מנהל)..."
+                placeholder="הזן שם משתמש (למשל: משה)..."
                 autoFocus
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
@@ -655,7 +658,7 @@ export default function App() {
             <button onClick={() => setIsUserMenuOpen(!isUserMenuOpen)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', backgroundColor: theme.subCardBg, borderRadius: '12px', border: `1px solid ${theme.border}`, cursor: 'pointer' }}>
               <div style={{ width: '8px', height: '8px', backgroundColor: '#22c55e', borderRadius: '50%' }} />
               <span style={{ fontWeight: '800', color: theme.textMain, fontSize: '14px' }}>{currentUser}</span>
-              <span style={{ fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>{userRole === 'מנהל' ? 'מנהל' : 'משתמש'}</span>
+              <span style={{ fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>מנהל</span>
               <span style={{ fontSize: '11px', color: theme.textMuted }}>▼</span>
             </button>
 
@@ -786,9 +789,7 @@ export default function App() {
                 <button onClick={() => setViewMode('dashboard')} style={{ padding: '6px 12px', borderRadius: '8px', border: 'none', backgroundColor: viewMode === 'dashboard' ? '#2563eb' : 'transparent', color: viewMode === 'dashboard' ? '#ffffff' : theme.textMuted, fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>📊 דשבורד</button>
               </div>
 
-              {userRole === 'מנהל' && (
-                <button onClick={() => setShowAddProjectModal(true)} style={{ padding: '8px 16px', backgroundColor: '#2563eb', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '800', color: '#ffffff', cursor: 'pointer' }}>+ פרויקט חדש</button>
-              )}
+              <button onClick={() => setShowAddProjectModal(true)} style={{ padding: '8px 16px', backgroundColor: '#2563eb', border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: '800', color: '#ffffff', cursor: 'pointer' }}>+ פרויקט חדש</button>
             </div>
           </div>
         </div>
@@ -882,7 +883,7 @@ export default function App() {
             )}
           </div>
 
-          {userRole === 'מנהל' && currentTab === 'active' && (
+          {currentTab === 'active' && (
             <button onClick={() => setShowAddTaskModal(true)} style={{ padding: '12px 24px', backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '12px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>+ משימה חדשה</button>
           )}
         </div>
@@ -1044,7 +1045,7 @@ export default function App() {
                       <span style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 10px', borderRadius: '12px' }}>{projectTasks.length} משימות</span>
                     </div>
 
-                    {projectDoc && userRole === 'מנהל' && currentTab === 'active' && (
+                    {projectDoc && currentTab === 'active' && (
                       <button onClick={() => handleDeleteProject(projectDoc.id, projectDoc.name)} style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px' }}>🗑️ מחק פרויקט</button>
                     )}
                   </div>
@@ -1057,9 +1058,9 @@ export default function App() {
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'right', minWidth: '1350px' }}>
                         <thead>
                           <tr style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderBottom: `1.5px solid ${theme.border}`, color: theme.textMuted }}>
-                            {userRole === 'מנהל' && <th style={{ width: '30px' }}></th>}
+                            <th style={{ width: '30px' }}></th>
                             <th style={{ padding: '14px 16px', width: '110px' }}>נושא</th>
-                            <th style={{ padding: '14px 16px', minWidth: '240px' }}>תיאור המשימה ותת-משימות</th>
+                            <th style={{ padding: '14px 16px', minWidth: '260px' }}>תיאור המשימה ותת-משימות</th>
                             <th style={{ padding: '14px 12px', width: '130px' }}>אחראים</th>
                             <th onClick={() => handleSort('priority')} style={{ padding: '14px 10px', width: '85px', cursor: 'pointer' }}>עדיפות ↕</th>
                             <th style={{ padding: '14px 12px', width: '95px' }}>פתיחה</th>
@@ -1068,8 +1069,8 @@ export default function App() {
                             <th onClick={() => handleSort('delays')} style={{ padding: '14px 10px', width: '95px', textAlign: 'center', cursor: 'pointer' }}>דחיות ↕</th>
                             <th style={{ padding: '14px 10px', width: '85px', textAlign: 'center' }}>איחור</th>
                             <th style={{ padding: '14px 14px', width: '110px' }}>סטטוס</th>
-                            <th style={{ padding: '14px 16px', minWidth: '280px' }}>הערות (עריכה / מחיקה)</th>
-                            {userRole === 'מנהל' && <th style={{ padding: '14px 12px', width: '120px', textAlign: 'center' }}>פעולות</th>}
+                            <th style={{ padding: '14px 16px', minWidth: '280px' }}>הערות</th>
+                            <th style={{ padding: '14px 12px', width: '120px', textAlign: 'center' }}>פעולות</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1080,44 +1081,53 @@ export default function App() {
 
                             return (
                               <tr key={t.id} style={{ borderBottom: `1px solid ${theme.border}`, backgroundColor: isCompleted ? (isDarkMode ? '#131d2e' : '#fafafa') : dueSoon ? (isDarkMode ? '#422006' : '#fefce8') : 'transparent', verticalAlign: 'top' }}>
-                                {userRole === 'מנהל' && <td style={{ padding: '14px 6px', textAlign: 'center', opacity: 0.5 }}>⋮⋮</td>}
+                                <td style={{ padding: '14px 6px', textAlign: 'center', opacity: 0.5 }}>⋮⋮</td>
                                 <td style={{ padding: '14px 16px', fontWeight: '800', color: pColor }}>
                                   {t.topic ? <span style={{ backgroundColor: `${pColor}15`, padding: '4px 8px', borderRadius: '6px' }}>{t.topic}</span> : <span style={{ color: theme.textMuted }}>-</span>}
                                 </td>
                                 <td style={{ padding: '14px 16px' }}>
-                                  <div style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', marginBottom: '8px' }}>
+                                  <div style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', marginBottom: '6px' }}>
                                     {t.description}
                                   </div>
 
                                   {/* רשימת תת-משימות */}
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
                                     {(t.subtasks || []).map((sub) => (
                                       <div key={sub.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', backgroundColor: theme.cardBg, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}` }}>
                                         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', textDecoration: sub.completed ? 'line-through' : 'none', color: sub.completed ? theme.textMuted : theme.textMain }}>
                                           <input type="checkbox" checked={sub.completed} onChange={() => handleToggleSubTask(t.id, sub.id)} />
                                           {sub.text}
                                         </label>
-                                        {userRole === 'מנהל' && (
-                                          <button onClick={() => handleDeleteSubTask(t.id, sub.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>✕</button>
-                                        )}
+                                        <button onClick={() => handleDeleteSubTask(t.id, sub.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>✕</button>
                                       </div>
                                     ))}
                                   </div>
 
-                                  {/* הוספת תת-משימה (+) */}
-                                  {userRole === 'מנהל' && (
-                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                      <input
-                                        type="text"
-                                        value={subTaskInputs[t.id] || ''}
-                                        onChange={(e) => setSubTaskInputs({ ...subTaskInputs, [t.id]: e.target.value })}
-                                        placeholder="+ הוסף תת-משימה..."
-                                        style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px' }}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleAddSubTask(t.id)}
-                                      />
-                                      <button onClick={() => handleAddSubTask(t.id)} style={{ padding: '4px 8px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>+</button>
-                                    </div>
-                                  )}
+                                  {/* כפתור פלוס לקובץ תת-משימה */}
+                                  <div>
+                                    {activeSubTaskAddingId === t.id ? (
+                                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginTop: '4px' }}>
+                                        <input
+                                          type="text"
+                                          value={subTaskTextInputs[t.id] || ''}
+                                          onChange={(e) => setSubTaskTextInputs({ ...subTaskTextInputs, [t.id]: e.target.value })}
+                                          placeholder="הקלד תת-משימה..."
+                                          autoFocus
+                                          style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px' }}
+                                          onKeyDown={(e) => e.key === 'Enter' && handleAddSubTask(t.id)}
+                                        />
+                                        <button onClick={() => handleAddSubTask(t.id)} style={{ padding: '4px 8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>הוסף</button>
+                                        <button onClick={() => setActiveSubTaskAddingId(null)} style={{ padding: '4px 6px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>ביטול</button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => setActiveSubTaskAddingId(t.id)}
+                                        style={{ background: 'none', border: '1px dashed #2563eb', color: '#2563eb', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                        + הוסף תת-משימה
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                                 <td style={{ padding: '14px 12px' }}>
                                   {t.assignee ? (
@@ -1138,7 +1148,7 @@ export default function App() {
                                   <select value={t.status} onChange={(e) => handleStatusChange(t.id, e.target.value as any)} style={{ padding: '6px 10px', borderRadius: '8px', border: 'none', fontSize: '12px', fontWeight: '800', backgroundColor: t.status === 'הושלם' ? '#dcfce7' : t.status === 'נדחה' ? '#fee2e2' : '#e0f2fe', color: t.status === 'הושלם' ? '#166534' : t.status === 'נדחה' ? '#b91c1c' : '#0369a1' }}>
                                     <option value="פתוח">פתוח</option>
                                     <option value="בביצוע">בביצוע</option>
-                                    <option value="הושלם">הושלם</option>
+                                    <option value="הושלם">הושלם (ארכיון)</option>
                                     <option value="נדחה">נדחה</option>
                                   </select>
                                 </td>
@@ -1147,12 +1157,10 @@ export default function App() {
                                     <div key={n.id} style={{ fontSize: '12px', backgroundColor: theme.subCardBg, padding: '8px 10px', borderRadius: '8px', marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <span><b>{n.author}:</b></span>
-                                        {userRole === 'מנהל' && (
-                                          <div style={{ display: 'flex', gap: '6px' }}>
-                                            <button onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px' }} title="ערוך">✏️</button>
-                                            <button onClick={() => handleDeleteNote(t.id, n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#ef4444' }} title="מחק">🗑️</button>
-                                          </div>
-                                        )}
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                          <button onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px' }} title="ערוך">✏️</button>
+                                          <button onClick={() => handleDeleteNote(t.id, n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#ef4444' }} title="מחק">🗑️</button>
+                                        </div>
                                       </div>
 
                                       {editingNote?.taskId === t.id && editingNote?.noteId === n.id ? (
@@ -1177,25 +1185,23 @@ export default function App() {
                                     <button onClick={() => handleAddNote(t.id)} style={{ padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer' }}>שלח</button>
                                   </div>
                                 </td>
-                                {userRole === 'מנהל' && (
-                                  <td style={{ padding: '14px 12px', textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                      {currentTab === 'trash' ? (
-                                        <>
-                                          <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="שחזר משימה">שחזר</button>
-                                          <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="מחק לצמיתות">מחק</button>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="שכפל משימה">📋</button>
-                                          <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="ערוך משימה">✏️</button>
-                                          <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="העבר לארכיון">📦</button>
-                                          <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626', cursor: 'pointer' }} title="העבר לסל מחזור">🗑️</button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </td>
-                                )}
+                                <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                    {currentTab === 'trash' ? (
+                                      <>
+                                        <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="שחזר משימה">שחזר</button>
+                                        <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="מחק לצמיתות">מחק</button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="שכפל משימה">📋</button>
+                                        <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="ערוך משימה">✏️</button>
+                                        <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="העבר לארכיון">📦</button>
+                                        <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626', cursor: 'pointer' }} title="העבר לסל מחזור">🗑️</button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
                               </tr>
                             );
                           })}
@@ -1233,23 +1239,21 @@ export default function App() {
                                 <option value="נדחה">נדחה</option>
                               </select>
 
-                              {userRole === 'מנהל' && (
-                                <div style={{ display: 'flex', gap: '6px' }}>
-                                  {currentTab === 'trash' ? (
-                                    <>
-                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>שחזר</button>
-                                      <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>מחק</button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="שכפל">📋</button>
-                                      <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ערוך">✏️</button>
-                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ארכיון">📦</button>
-                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }} title="מחק">🗑️</button>
-                                    </>
-                                  )}
-                                </div>
-                              )}
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                {currentTab === 'trash' ? (
+                                  <>
+                                    <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>שחזר</button>
+                                    <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>מחק</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="שכפל">📋</button>
+                                    <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ערוך">✏️</button>
+                                    <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ארכיון">📦</button>
+                                    <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }} title="מחק">🗑️</button>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </div>
                         );
