@@ -276,6 +276,74 @@ export default function App() {
     }
   };
 
+  const handleSaveEditedTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTask || userRole !== 'מנהל') return;
+    await updateDoc(doc(db, 'tasks', editingTask.id), {
+      project: editingTask.project,
+      topic: editingTask.topic || '',
+      description: editingTask.description,
+      assignee: editingTask.assignee || '',
+      dueDate: editingTask.dueDate || '',
+      priority: editingTask.priority,
+      status: editingTask.status
+    });
+    setEditingTask(null);
+  };
+
+  const handleDuplicateTask = async (task: Task) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await addDoc(collection(db, 'tasks'), {
+        project: task.project,
+        topic: task.topic,
+        description: task.description,
+        assignee: task.assignee,
+        startDate: new Date().toISOString().split('T')[0],
+        dueDate: task.dueDate,
+        completedDate: '',
+        delays: 0,
+        priority: task.priority,
+        isArchived: false,
+        isDeleted: false,
+        status: 'פתוח',
+        orderIndex: Date.now(),
+        notes: [],
+        subtasks: task.subtasks || [],
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בשכפול המשימה.');
+    }
+  };
+
+  const handleToggleArchive = async (taskId: string, currentValue: boolean) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await updateDoc(doc(db, 'tasks', taskId), {
+        isArchived: !currentValue,
+        isDeleted: false
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בעדכון הארכיון.');
+    }
+  };
+
+  const handleToggleTrash = async (taskId: string, currentValue: boolean) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await updateDoc(doc(db, 'tasks', taskId), {
+        isDeleted: !currentValue,
+        isArchived: false
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בעדכון סל המחזור.');
+    }
+  };
+
   const handleAddNote = async (taskId: string) => {
     const text = noteInputs[taskId]?.trim();
     if (!text) return;
@@ -586,7 +654,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* מודאל וואטסאפ מעודכן */}
+        {/* מודאל וואטסאפ */}
         {showWhatsAppModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '540px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', border: `1px solid ${theme.border}` }}>
@@ -603,9 +671,46 @@ export default function App() {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={handleExecuteWhatsAppSend} style={{ flex: 1, padding: '12px', backgroundColor: '#25d366', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '800', cursor: 'pointer' }}>שלח משימות בוואטסאפ</button>
+                <button onClick={handleExecuteWhatsAppSend} style={{ flex: 1, padding: '12px', backgroundColor: '#25d366', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '800', cursor: 'pointer' }}>שלח בוואטסאפ</button>
                 <button onClick={() => setShowWhatsAppModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>ביטול</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* מודאל עריכת משימה */}
+        {editingTask && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
+            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '520px', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ margin: '0 0 18px 0', fontSize: '20px', fontWeight: '800' }}>עריכת משימה</h3>
+              <form onSubmit={handleSaveEditedTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תיאור המשימה</label>
+                  <textarea value={editingTask.description} onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })} rows={3} style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, resize: 'vertical' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>אחראים</label>
+                  <textarea value={editingTask.assignee} onChange={(e) => setEditingTask({ ...editingTask, assignee: e.target.value })} rows={2} style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, resize: 'vertical' }} />
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>תאריך יעד</label>
+                    <input type="date" value={editingTask.dueDate} onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })} style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', marginBottom: '4px' }}>עדיפות</label>
+                    <select value={editingTask.priority} onChange={(e) => setEditingTask({ ...editingTask, priority: e.target.value as any })} style={{ width: '100%', padding: '11px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText }}>
+                      <option value="גבוהה">גבוהה</option>
+                      <option value="בינונית">בינונית</option>
+                      <option value="נמוכה">נמוכה</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>שמור שינויים</button>
+                  <button type="button" onClick={() => setEditingTask(null)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>ביטול</button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -901,10 +1006,10 @@ export default function App() {
                                 {userRole === 'מנהל' && (
                                   <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📋</button>
-                                      <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>✏️</button>
-                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📦</button>
-                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626' }}>🗑️</button>
+                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="שכפל משימה">📋</button>
+                                      <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="ערוך משימה">✏️</button>
+                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="העבר לארכיון">📦</button>
+                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626', cursor: 'pointer' }} title="העבר לסל מחזור">🗑️</button>
                                     </div>
                                   </td>
                                 )}
@@ -946,9 +1051,11 @@ export default function App() {
                               </select>
 
                               {userRole === 'מנהל' && (
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                  <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>✏️ ערוך</button>
-                                  <button onClick={() => handleDeleteProject(t.id, t.project)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="שכפל">📋</button>
+                                  <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ערוך">✏️</button>
+                                  <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ארכיון">📦</button>
+                                  <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }} title="מחק">🗑️</button>
                                 </div>
                               )}
                             </div>
