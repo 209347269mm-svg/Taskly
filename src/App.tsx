@@ -1021,11 +1021,13 @@ export default function App() {
           </div>
         ) : (
           
-          /* תצוגת טבלה או כרטיסיות */
+          /* תצוגת טבלה או כרטיסיות (מציגה רק פרויקטים שיש בהם משימות תואמות בעת סינון) */
           allProjectNames
             .filter((p) => {
               const matchSelectedProj = selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p);
-              return matchSelectedProj;
+              const hasTasks = filteredTasks.some(t => t.project === p);
+              const isFiltered = !selectedPriorityFilters.includes('הכל') || !selectedStatusFilters.includes('הכל');
+              return matchSelectedProj && (isFiltered ? hasTasks : true);
             })
             .map((projectName) => {
               const projectTasks = filteredTasks.filter((t) => t.project === projectName);
@@ -1186,7 +1188,12 @@ export default function App() {
                                 </td>
                                 <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                   <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                    {currentTab === 'trash' ? (
+                                    {currentTab === 'archived' ? (
+                                      <>
+                                        <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="הוצא מארכיון">החזר לפעיל</button>
+                                        <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="העבר לסל מחזור">מחק</button>
+                                      </>
+                                    ) : currentTab === 'trash' ? (
                                       <>
                                         <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="שחזר משימה">שחזר</button>
                                         <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="מחק לצמיתות">מחק</button>
@@ -1239,7 +1246,12 @@ export default function App() {
                               </select>
 
                               <div style={{ display: 'flex', gap: '6px' }}>
-                                {currentTab === 'trash' ? (
+                                {currentTab === 'archived' ? (
+                                  <>
+                                    <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>החזר</button>
+                                    <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>מחק</button>
+                                  </>
+                                ) : currentTab === 'trash' ? (
                                   <>
                                     <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>שחזר</button>
                                     <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>מחק</button>
