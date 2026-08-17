@@ -67,8 +67,8 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  // סיסמת מנהל ראשונית 123456
-  const [adminPassword, setAdminPassword] = useState('123456');
+  // סיסמת מנהל התחלתית 123456 עם אופציה לשינוי
+  const [adminPassword, setAdminPassword] = useState<string>(() => localStorage.getItem('taskly_admin_pass') || '123456');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPasswordInput, setNewPasswordInput] = useState('');
   
@@ -78,8 +78,9 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'calendar' | 'dashboard'>('table');
   const [currentTab, setCurrentTab] = useState<'active' | 'archived' | 'trash'>('active');
   
-  // פרויקטים מרובים
+  // פרויקטים מרובים לבחירה עם תיבות סימון
   const [selectedProjectFilters, setSelectedProjectFilters] = useState<string[]>(['הכל']);
+  const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState<string>('הכל');
   const [priorityFilter, setPriorityFilter] = useState<string>('הכל');
@@ -110,16 +111,6 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) signInAnonymously(auth).catch((err) => console.error(err));
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const docRef = doc(db, 'settings', 'admin_config');
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().adminPassword) {
-        setAdminPassword(docSnap.data().adminPassword);
-      }
     });
     return () => unsubscribe();
   }, []);
@@ -202,7 +193,7 @@ export default function App() {
       return;
     }
     if (roleInput === 'מנהל' && passwordInput !== adminPassword) {
-      setAuthError('סיסמת מנהל שגויה.');
+      setAuthError('סיסמת מנהל שגויה (ברירת מחדל: 123456).');
       return;
     }
     localStorage.setItem('taskly_user', nameInput.trim());
@@ -220,19 +211,14 @@ export default function App() {
     setIsUserMenuOpen(false);
   };
 
-  const handleUpdatePassword = async (e: React.FormEvent) => {
+  const handleUpdatePassword = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPasswordInput.trim()) return;
-    try {
-      await setDoc(doc(db, 'settings', 'admin_config'), { adminPassword: newPasswordInput.trim() }, { merge: true });
-      setAdminPassword(newPasswordInput.trim());
-      setNewPasswordInput('');
-      setShowPasswordModal(false);
-      alert("סיסמת המנהל עודכנה בהצלחה!");
-    } catch (err) {
-      console.error(err);
-      alert("שגיאה בעדכון הסיסמה.");
-    }
+    localStorage.setItem('taskly_admin_pass', newPasswordInput.trim());
+    setAdminPassword(newPasswordInput.trim());
+    setNewPasswordInput('');
+    setShowPasswordModal(false);
+    alert("סיסמת המנהל עודכנה בהצלחה!");
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -478,7 +464,7 @@ export default function App() {
       const matchProject = selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(t.project);
       
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
-      const matchPriority = priorityFilter === 'הכל' || (t.priority === priorityFilter && t.topic && t.topic.trim() !== '');
+      const matchPriority = priorityFilter === 'הכל' || t.priority === priorityFilter;
 
       const matchSearch = searchTerm === '' ||
         t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -776,28 +762,54 @@ export default function App() {
           </div>
         )}
 
-        {/* בורר פרויקטים מרובים ותצוגות */}
+        {/* בורר פרויקטים מרובים באמצעות תיבות סימון (Checkboxes) נפתח */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
               <span style={{ fontSize: '14px', fontWeight: '800' }}>📁 סינון פרויקטים:</span>
-              <select
-                multiple
-                value={selectedProjectFilters}
-                onChange={(e) => {
-                  const values = Array.from(e.target.selectedOptions, option => option.value);
-                  if (values.includes('הכל') || values.length === 0) {
-                    setSelectedProjectFilters(['הכל']);
-                  } else {
-                    setSelectedProjectFilters(values);
-                  }
-                }}
-                style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '13px', fontWeight: '700', height: '38px', minWidth: '160px' }}
-                title="החזק את מקש Ctrl כדי לבחור מספר פרויקטים"
-              >
-                <option value="הכל">כל הפרויקטים (הצג הכל)</option>
-                {allProjectNames.map((pName) => <option key={pName} value={pName}>{pName}</option>)}
-              </select>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
+                  style={{ padding: '10px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  {selectedProjectFilters.includes('הכל') ? 'כל הפרויקטים' : `נבחרו ${selectedProjectFilters.length} פרויקטים`} ▾
+                </button>
+
+                {isProjectDropdownOpen && (
+                  <div style={{ position: 'absolute', top: '115%', right: 0, backgroundColor: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', padding: '12px', zIndex: 50, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedProjectFilters.includes('הכל')}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedProjectFilters(['הכל']);
+                        }}
+                      />
+                      הצג הכל
+                    </label>
+                    <hr style={{ borderColor: theme.border, margin: '4px 0' }} />
+                    {allProjectNames.map((pName) => (
+                      <label key={pName} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedProjectFilters.includes(pName)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const updated = selectedProjectFilters.includes('הכל') ? [pName] : [...selectedProjectFilters, pName];
+                              setSelectedProjectFilters(updated);
+                            } else {
+                              const updated = selectedProjectFilters.filter(p => p !== pName);
+                              setSelectedProjectFilters(updated.length === 0 ? ['הכל'] : updated);
+                            }
+                          }}
+                        />
+                        {pName}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
@@ -982,9 +994,9 @@ export default function App() {
           </div>
         ) : (
           
-          /* תצוגת טבלה או כרטיסיות הרגילה */
+          /* תצוגת טבלה או כרטיסיות הרגילה (מציגה רק פרויקטים שיש בהם משימות תואמות) */
           allProjectNames
-            .filter((p) => selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p))
+            .filter((p) => (selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p)) && filteredTasks.some(t => t.project === p))
             .map((projectName) => {
               const projectTasks = filteredTasks.filter((t) => t.project === projectName);
               const projectDoc = projects.find((p) => p.name === projectName);
