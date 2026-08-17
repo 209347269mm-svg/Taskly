@@ -13,6 +13,7 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
+import * as XLSX from 'xlsx';
 
 interface NoteItem {
   id: string;
@@ -309,6 +310,58 @@ export default function App() {
     }
   };
 
+  // ייבוא קובץ אקסל
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (userRole !== 'מנהל') return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        const todayStr = new Date().toISOString().split('T')[0];
+        for (const row of data) {
+          const desc = row['תיאור'] || row['תיאור המשימה'] || row['description'] || 'משימה מיובאת';
+          const proj = row['פרויקט'] || row['project'] || newProject || 'כללי';
+          const top = row['נושא'] || row['topic'] || '';
+          const assign = row['אחראי'] || row['אחראים'] || row['assignee'] || '';
+          const prio = row['עדיפות'] || row['priority'] || 'בינונית';
+          const due = row['יעד'] || row['תאריך יעד'] || row['dueDate'] || '';
+
+          await addDoc(collection(db, 'tasks'), {
+            project: proj,
+            topic: top,
+            description: desc,
+            assignee: assign,
+            startDate: todayStr,
+            dueDate: due,
+            completedDate: '',
+            delays: 0,
+            priority: ['גבוהה', 'בינונית', 'נמוכה'].includes(prio) ? prio : 'בינונית',
+            isArchived: false,
+            isDeleted: false,
+            status: 'פתוח',
+            orderIndex: Date.now(),
+            notes: [],
+            subtasks: [],
+            createdAt: serverTimestamp()
+          });
+        }
+        alert(`ובא בהצלחה! יובאו ${data.length} משימות.`);
+      } catch (err) {
+        console.error(err);
+        alert("שגיאה בקריאת קובץ האקסל.");
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const handleDuplicateTask = async (task: Task) => {
     if (userRole !== 'מנהל') return;
     const todayStr = new Date().toISOString().split('T')[0];
@@ -482,6 +535,25 @@ export default function App() {
     });
   };
 
+  const handleDragStart = (taskId: string) => {
+    if (userRole !== 'מנהל') return;
+    setDraggedTaskId(taskId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (targetTaskId: string) => {
+    if (!draggedTaskId || draggedTaskId === targetTaskId || userRole !== 'מנהל') return;
+    const targetTask = tasks.find((t) => t.id === targetTaskId);
+    if (!targetTask) return;
+    await updateDoc(doc(db, 'tasks', draggedTaskId), {
+      orderIndex: (targetTask.orderIndex || 0) + 1
+    });
+    setDraggedTaskId(null);
+  };
+
   const handleExportCSV = () => {
     const activeTasks = tasks.filter((t) => !t.isDeleted && (currentTab === 'archived' ? t.isArchived : !t.isArchived));
     if (activeTasks.length === 0) {
@@ -617,7 +689,7 @@ export default function App() {
     inputText: isDarkMode ? '#ffffff' : '#0f172a'
   };
 
-  // מסך התחברות מלא ותקין עם מצב כהה/בהיר
+  // מסך התחברות
   if (!currentUser) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, padding: '20px', direction: 'rtl', fontFamily: FONT_FAMILY, transition: 'background-color 0.2s', position: 'relative' }}>
@@ -636,7 +708,7 @@ export default function App() {
             ✓
           </div>
 
-          <h2 style={{ fontSize: '25px', fontWeight: '900', color: theme.textMain, margin: '0 0 6px 0' }}>כניסה למערכת</h2>
+          <h2 style={{ fontSize: '25px', fontWeight: '900', color: theme.textMain, margin: '0 0 6px 0', letterSpacing: '-0.3px' }}>כניסה למערכת</h2>
           <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0', fontWeight: '500' }}>ניהול ומעקב משימות ופרויקטים</p>
 
           {authError && (
@@ -752,6 +824,14 @@ export default function App() {
               >
                 📊 ייצוא Excel
               </button>
+
+              {/* כפתור ייבוא מקובץ אקסל */}
+              {userRole === 'מנהל' && (
+                <label style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #3b82f6', backgroundColor: isDarkMode ? '#1e3a8a' : '#eff6ff', color: '#3b82f6', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  📂 ייבוא Excel
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={handleExcelUpload} style={{ display: 'none' }} />
+                </label>
+              )}
 
               <button
                 onClick={() => {
@@ -895,9 +975,44 @@ export default function App() {
           </div>
         )}
 
+        {/* Command Palette */}
+        {showCommandPalette && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, paddingTop: '15vh' }}>
+            <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '20px', width: '100%', maxWidth: '580px', border: `1px solid ${theme.border}`, boxShadow: '0 25px 50px rgba(0,0,0,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <input
+                  type="text"
+                  placeholder="חיפוש גלובלי מהיר בכל המשימות..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  autoFocus
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '15px', outline: 'none' }}
+                />
+              </div>
+              <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {filteredTasks.slice(0, 8).map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => { setShowCommandPalette(false); }}
+                    style={{ padding: '10px 14px', borderRadius: '10px', backgroundColor: theme.subCardBg, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  >
+                    <div>
+                      <span style={{ fontWeight: '800', color: getProjectColor(t.project), marginLeft: '8px' }}>[{t.project}]</span>
+                      <span style={{ fontWeight: '600', color: theme.textMain }}>{t.description}</span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: theme.textMuted }}>{t.assignee}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* סרגל בורר פרויקטים נפתח */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, boxShadow: '0 2px 8px rgba(0,0,0,0.03)', marginBottom: '20px' }}>
+          
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+            
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <span style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>📁 פרויקט:</span>
               <select
@@ -931,17 +1046,35 @@ export default function App() {
 
         {/* טאבים ראשיים */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={() => setCurrentTab('active')} style={{ padding: '10px 18px', borderRadius: '12px', border: currentTab === 'active' ? '1.5px solid #2563eb' : `1px solid ${theme.border}`, backgroundColor: currentTab === 'active' ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : theme.cardBg, color: currentTab === 'active' ? '#2563eb' : theme.textMain, fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
               📋 משימות פעילות ({counts.active})
             </button>
+
             <button onClick={() => setCurrentTab('archived')} style={{ padding: '10px 18px', borderRadius: '12px', border: currentTab === 'archived' ? '1.5px solid #d97706' : `1px solid ${theme.border}`, backgroundColor: currentTab === 'archived' ? (isDarkMode ? '#451a03' : '#fef3c7') : theme.cardBg, color: currentTab === 'archived' ? '#d97706' : theme.textMain, fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
               📦 ארכיון ({counts.archived})
             </button>
+
             <button onClick={() => setCurrentTab('trash')} style={{ padding: '10px 18px', borderRadius: '12px', border: currentTab === 'trash' ? '1.5px solid #dc2626' : `1px solid ${theme.border}`, backgroundColor: currentTab === 'trash' ? (isDarkMode ? '#450a0a' : '#fee2e2') : theme.cardBg, color: currentTab === 'trash' ? '#dc2626' : theme.textMain, fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>
               🗑️ סל מחזור ({counts.trash})
             </button>
           </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {userRole === 'מנהל' && currentTab === 'active' && counts.completedActive > 0 && (
+              <button onClick={handleArchiveAllCompleted} style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid #d97706', backgroundColor: '#fffbeb', color: '#b45309', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>
+                📦 העבר משימות שהושלמו לארכיון ({counts.completedActive})
+              </button>
+            )}
+
+            {userRole === 'מנהל' && currentTab === 'trash' && counts.trash > 0 && (
+              <button onClick={handleEmptyTrash} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontWeight: '800', cursor: 'pointer', fontSize: '13px' }}>
+                🔥 רוקן סל מחזור
+              </button>
+            )}
+          </div>
+
         </div>
 
         {/* שורת חיפוש וסינונים */}
