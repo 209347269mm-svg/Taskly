@@ -660,7 +660,7 @@ export default function App() {
           </div>
         )}
 
-        {/* תצוגה ראשית */}
+        {/* תצוגת דשבורד מעוצבת */}
         {viewMode === 'dashboard' ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
             <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
@@ -731,6 +731,7 @@ export default function App() {
           </div>
         ) : (
           
+          /* תצוגת טבלה או כרטיסיות הרגילה */
           allProjectNames
             .filter((p) => selectedProjectFilter === 'הכל' || selectedProjectFilter === p)
             .map((projectName) => {
