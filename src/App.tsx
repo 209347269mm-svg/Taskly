@@ -56,21 +56,21 @@ interface ProjectDoc {
 const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-const USERS: Record<string, { password: string; role: 'משתמש' | 'מנהל'; displayName: string }> = {
-  מנהל: { password: '1234', role: 'מנהל', displayName: 'מנהל' },
-  משתמש: { password: '1234', role: 'משתמש', displayName: 'משתמש' },
-};
-
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
+  // התחברות
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
+  // סיסמת מנהל
+  const [adminPassword, setAdminPassword] = useState('1234');
+  
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
@@ -106,6 +106,16 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) signInAnonymously(auth).catch((err) => console.error(err));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const docRef = doc(db, 'settings', 'admin_config');
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists() && docSnap.data().adminPassword) {
+        setAdminPassword(docSnap.data().adminPassword);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -183,31 +193,18 @@ export default function App() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-
-    const username = nameInput.trim();
-    const user = USERS[username];
-
-    if (!username) {
-      setAuthError('נא להזין שם משתמש.');
+    if (!nameInput.trim()) {
+      setAuthError('נא להזין שם מלא או שם משתמש.');
       return;
     }
-
-    if (!user) {
-      setAuthError('שם המשתמש אינו מורשה להיכנס למערכת.');
+    if (roleInput === 'מנהל' && passwordInput !== adminPassword) {
+      setAuthError('סיסמת מנהל שגויה.');
       return;
     }
-
-    if (passwordInput !== user.password) {
-      setAuthError('סיסמה שגויה.');
-      return;
-    }
-
-    localStorage.setItem('taskly_user', user.displayName);
-    localStorage.setItem('taskly_role', user.role);
-    setCurrentUser(user.displayName);
-    setUserRole(user.role);
-    setNameInput('');
-    setPasswordInput('');
+    localStorage.setItem('taskly_user', nameInput.trim());
+    localStorage.setItem('taskly_role', roleInput);
+    setCurrentUser(nameInput.trim());
+    setUserRole(roleInput);
   };
 
   const handleLogout = () => {
@@ -533,6 +530,7 @@ export default function App() {
     inputText: isDarkMode ? '#ffffff' : '#0f172a'
   };
 
+  // מסך כניסה המקורי המדויק לפי התמונה שלך
   if (!currentUser) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, padding: '20px', direction: 'rtl', fontFamily: FONT_FAMILY, transition: 'background-color 0.2s', position: 'relative' }}>
@@ -549,7 +547,7 @@ export default function App() {
           </div>
 
           <h2 style={{ fontSize: '25px', fontWeight: '900', color: theme.textMain, margin: '0 0 6px 0' }}>כניסה למערכת</h2>
-          <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0', fontWeight: '500' }}>שם משתמש וסיסמה</p>
+          <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0', fontWeight: '500' }}>ניהול ומעקב משימות ופרויקטים</p>
 
           {authError && (
             <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>
@@ -560,13 +558,13 @@ export default function App() {
           <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                שם משתמש
+                שם מלא / כינוי
               </label>
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם משתמש..."
+                placeholder="הזן את שמך..."
                 autoFocus
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
@@ -574,16 +572,40 @@ export default function App() {
 
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                סיסמה
+                סוג הרשאה
               </label>
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="הזן סיסמה..."
-                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-              />
+              <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '4px', gap: '4px', border: `1px solid ${theme.border}` }}>
+                <button
+                  type="button"
+                  onClick={() => setRoleInput('משתמש')}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: roleInput === 'משתמש' ? '2px solid #2563eb' : 'none', backgroundColor: roleInput === 'משתמש' ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : 'transparent', color: roleInput === 'משתמש' ? '#2563eb' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  משתמש
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRoleInput('מנהל')}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: roleInput === 'מנהל' ? '2px solid #2563eb' : 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  מנהל
+                </button>
+              </div>
             </div>
+
+            {roleInput === 'מנהל' && (
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
+                  סיסמת מנהל
+                </label>
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="הזן סיסמה..."
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                />
+              </div>
+            )}
 
             <button
               type="submit"
