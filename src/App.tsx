@@ -18,7 +18,6 @@ interface NoteItem {
   text: string;
   author: string;
   time: string;
-  isManagerOnly?: boolean;
 }
 
 interface SubTask {
@@ -55,45 +54,27 @@ interface ProjectDoc {
 const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
-const USERS: Record<string, { password: string; role: 'משתמש' | 'מנהל'; displayName: string }> = {
-  מנהל: { password: '123456', role: 'מנהל', displayName: 'מנהל' },
-  משתמש: { password: '1234', role: 'משתמש', displayName: 'משתמש' },
-};
-
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
-  // התחברות
   const [nameInput, setNameInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  // שינוי סיסמה אישית
-  const [userPasswords, setUserPasswords] = useState<Record<string, string>>(() => {
-    const saved = localStorage.getItem('taskly_user_passwords');
-    return saved ? JSON.parse(saved) : { מנהל: '123456', משתמש: '1234' };
-  });
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'calendar' | 'dashboard'>('table');
   const [currentTab, setCurrentTab] = useState<'active' | 'archived' | 'trash'>('active');
   
-  // פרויקטים מרובים לבחירה
   const [selectedProjectFilters, setSelectedProjectFilters] = useState<string[]>(['הכל']);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
-  // סטטוסים מרובים לבחירה עם תיבות סימון
   const [selectedStatusFilters, setSelectedStatusFilters] = useState<string[]>(['הכל']);
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
 
-  // עדיפויות מרובות לבחירה עם תיבות סימון
   const [selectedPriorityFilters, setSelectedPriorityFilters] = useState<string[]>(['הכל']);
   const [isPriorityDropdownOpen, setIsPriorityDropdownOpen] = useState(false);
 
@@ -116,6 +97,8 @@ export default function App() {
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
+  const [subTaskInputs, setSubTaskInputs] = useState<{ [taskId: string]: string }>({});
+  const [editingNote, setEditingNote] = useState<{ taskId: string; noteId: string; text: string } | null>(null);
 
   useEffect(() => {
     localStorage.setItem('taskly_theme', isDarkMode ? 'dark' : 'light');
@@ -166,8 +149,7 @@ export default function App() {
             id: n.id || `note_${idx}`,
             text: n.text || '',
             author: n.author || 'אורח',
-            time: n.time || '',
-            isManagerOnly: !!n.isManagerOnly
+            time: n.time || ''
           })),
           subtasks: (data.subtasks || []).map((s: any, idx: number) => ({
             id: s.id || `sub_${idx}`,
@@ -206,42 +188,20 @@ export default function App() {
       setAuthError('נא להזין שם משתמש.');
       return;
     }
-    const targetUser = USERS[username];
-    if (!targetUser) {
-      setAuthError('שם משתמש לא קיים במערכת.');
-      return;
-    }
-    const currentPass = userPasswords[username] || targetUser.password;
-    if (passwordInput !== currentPass) {
-      setAuthError('סיסמה שגויה.');
-      return;
-    }
-    localStorage.setItem('taskly_user', targetUser.displayName);
-    localStorage.setItem('taskly_role', targetUser.role);
-    setCurrentUser(targetUser.displayName);
-    setUserRole(targetUser.role);
+    const role = username.toLowerCase() === 'מנהל' ? 'מנהל' : 'משתמש';
+    localStorage.setItem('taskly_user', username);
+    localStorage.setItem('taskly_role', role);
+    setCurrentUser(username);
+    setUserRole(role);
     setNameInput('');
-    setPasswordInput('');
   };
 
   const handleLogout = () => {
     localStorage.removeItem('taskly_user');
     localStorage.removeItem('taskly_role');
     setCurrentUser(null);
-    setPasswordInput('');
     setAuthError('');
     setIsUserMenuOpen(false);
-  };
-
-  const handleUpdatePassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPasswordInput.trim() || !currentUser) return;
-    const updated = { ...userPasswords, [currentUser]: newPasswordInput.trim() };
-    setUserPasswords(updated);
-    localStorage.setItem('taskly_user_passwords', JSON.stringify(updated));
-    setNewPasswordInput('');
-    setShowPasswordModal(false);
-    alert("הסיסמה האישית עודכנה בהצלחה!");
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -383,6 +343,7 @@ export default function App() {
     }
   };
 
+  // ניהול הערות (הוספה, עריכה, מחיקה)
   const handleAddNote = async (taskId: string) => {
     const text = noteInputs[taskId]?.trim();
     if (!text) return;
@@ -402,6 +363,55 @@ export default function App() {
 
     await updateDoc(doc(db, 'tasks', taskId), { notes: newNotes });
     setNoteInputs({ ...noteInputs, [taskId]: '' });
+  };
+
+  const handleDeleteNote = async (taskId: string, noteId: string) => {
+    if (userRole !== 'מנהל') return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const newNotes = task.notes.filter(n => n.id !== noteId);
+    await updateDoc(doc(db, 'tasks', taskId), { notes: newNotes });
+  };
+
+  const handleUpdateNote = async (taskId: string, noteId: string) => {
+    if (!editingNote || editingNote.noteId !== noteId) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const newNotes = task.notes.map(n => n.id === noteId ? { ...n, text: editingNote.text } : n);
+    await updateDoc(doc(db, 'tasks', taskId), { notes: newNotes });
+    setEditingNote(null);
+  };
+
+  // ניהול תת-משימות
+  const handleAddSubTask = async (taskId: string) => {
+    const text = subTaskInputs[taskId]?.trim();
+    if (!text) return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const newSubtasks = [...(task.subtasks || []), {
+      id: `sub_${Date.now()}`,
+      text,
+      completed: false
+    }];
+
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: newSubtasks });
+    setSubTaskInputs({ ...subTaskInputs, [taskId]: '' });
+  };
+
+  const handleToggleSubTask = async (taskId: string, subId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const newSubtasks = task.subtasks.map(s => s.id === subId ? { ...s, completed: !s.completed } : s);
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: newSubtasks });
+  };
+
+  const handleDeleteSubTask = async (taskId: string, subId: string) => {
+    if (userRole !== 'מנהל') return;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const newSubtasks = task.subtasks.filter(s => s.id !== subId);
+    await updateDoc(doc(db, 'tasks', taskId), { subtasks: newSubtasks });
   };
 
   const handleStatusChange = async (taskId: string, newStatus: 'פתוח' | 'בביצוע' | 'הושלם' | 'נדחה') => {
@@ -592,21 +602,8 @@ export default function App() {
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם משתמש (למשל: מנהל)..."
+                placeholder="הזן שם משתמש (למשל: משה, או מנהל)..."
                 autoFocus
-                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                סיסמה
-              </label>
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="הזן סיסמה..."
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
             </div>
@@ -651,9 +648,6 @@ export default function App() {
               <button onClick={() => { const activeTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived); setSelectedTaskIdsForWhatsApp(activeTasks.map(t => t.id)); setShowWhatsAppModal(true); }} style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #25d366', backgroundColor: isDarkMode ? '#064e3b' : '#f0fdf4', color: '#16a34a', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
                 💬 WhatsApp
               </button>
-              <button onClick={() => setShowPasswordModal(true)} style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
-                🔑 שינוי סיסמה
-              </button>
             </div>
           </div>
 
@@ -672,29 +666,6 @@ export default function App() {
             )}
           </div>
         </header>
-
-        {/* מודאל שינוי סיסמה אישית */}
-        {showPasswordModal && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
-            <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '400px', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '800' }}>🔑 שינוי סיסמה אישית</h3>
-              <form onSubmit={handleUpdatePassword} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <input
-                  type="password"
-                  value={newPasswordInput}
-                  onChange={(e) => setNewPasswordInput(e.target.value)}
-                  placeholder="הזן סיסמה חדשה למשתמש שלך..."
-                  autoFocus
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none' }}
-                />
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>עדכן סיסמה</button>
-                  <button type="button" onClick={() => setShowPasswordModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>ביטול</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
 
         {/* מודאל וואטסאפ */}
         {showWhatsAppModal && (
@@ -831,11 +802,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* שורת חיפוש וסינונים (כולל צ'קבוקסים לסטטוסים ולעדיפויות) */}
+        {/* שורת חיפוש וסינונים (סטטוסים ועדיפויות עם תיבות סימון) */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
           <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="חיפוש משימה, אחראי, נושא..." style={{ flex: 1, minWidth: '200px', padding: '12px 18px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none' }} />
           
-          {/* סינון סטטוסים מרובים עם צ'קבוקסים */}
+          {/* סטטוסים מרובים */}
           <div style={{ position: 'relative' }}>
             <button
               type="button"
@@ -873,7 +844,7 @@ export default function App() {
             )}
           </div>
 
-          {/* סינון עדיפויות מרובות עם צ'קבוקסים */}
+          {/* עדיפויות מרובות */}
           <div style={{ position: 'relative' }}>
             <button
               type="button"
@@ -1050,7 +1021,7 @@ export default function App() {
           </div>
         ) : (
           
-          /* תצוגת טבלה או כרטיסיות (מציגה פרויקטים לפי סינון נכון) */
+          /* תצוגת טבלה או כרטיסיות */
           allProjectNames
             .filter((p) => {
               const matchSelectedProj = selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p);
@@ -1088,7 +1059,7 @@ export default function App() {
                           <tr style={{ backgroundColor: isDarkMode ? '#1e293b' : '#f8fafc', borderBottom: `1.5px solid ${theme.border}`, color: theme.textMuted }}>
                             {userRole === 'מנהל' && <th style={{ width: '30px' }}></th>}
                             <th style={{ padding: '14px 16px', width: '110px' }}>נושא</th>
-                            <th style={{ padding: '14px 16px', minWidth: '240px' }}>תיאור המשימה</th>
+                            <th style={{ padding: '14px 16px', minWidth: '240px' }}>תיאור המשימה ותת-משימות</th>
                             <th style={{ padding: '14px 12px', width: '130px' }}>אחראים</th>
                             <th onClick={() => handleSort('priority')} style={{ padding: '14px 10px', width: '85px', cursor: 'pointer' }}>עדיפות ↕</th>
                             <th style={{ padding: '14px 12px', width: '95px' }}>פתיחה</th>
@@ -1097,7 +1068,7 @@ export default function App() {
                             <th onClick={() => handleSort('delays')} style={{ padding: '14px 10px', width: '95px', textAlign: 'center', cursor: 'pointer' }}>דחיות ↕</th>
                             <th style={{ padding: '14px 10px', width: '85px', textAlign: 'center' }}>איחור</th>
                             <th style={{ padding: '14px 14px', width: '110px' }}>סטטוס</th>
-                            <th style={{ padding: '14px 16px', minWidth: '280px' }}>הערות</th>
+                            <th style={{ padding: '14px 16px', minWidth: '280px' }}>הערות (עריכה / מחיקה)</th>
                             {userRole === 'מנהל' && <th style={{ padding: '14px 12px', width: '120px', textAlign: 'center' }}>פעולות</th>}
                           </tr>
                         </thead>
@@ -1114,7 +1085,39 @@ export default function App() {
                                   {t.topic ? <span style={{ backgroundColor: `${pColor}15`, padding: '4px 8px', borderRadius: '6px' }}>{t.topic}</span> : <span style={{ color: theme.textMuted }}>-</span>}
                                 </td>
                                 <td style={{ padding: '14px 16px' }}>
-                                  <div style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none' }}>{t.description}</div>
+                                  <div style={{ fontWeight: '600', color: isCompleted ? theme.textMuted : theme.textMain, textDecoration: isCompleted ? 'line-through' : 'none', marginBottom: '8px' }}>
+                                    {t.description}
+                                  </div>
+
+                                  {/* רשימת תת-משימות */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                                    {(t.subtasks || []).map((sub) => (
+                                      <div key={sub.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', backgroundColor: theme.cardBg, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}` }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', textDecoration: sub.completed ? 'line-through' : 'none', color: sub.completed ? theme.textMuted : theme.textMain }}>
+                                          <input type="checkbox" checked={sub.completed} onChange={() => handleToggleSubTask(t.id, sub.id)} />
+                                          {sub.text}
+                                        </label>
+                                        {userRole === 'מנהל' && (
+                                          <button onClick={() => handleDeleteSubTask(t.id, sub.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px' }}>✕</button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {/* הוספת תת-משימה (+) */}
+                                  {userRole === 'מנהל' && (
+                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                      <input
+                                        type="text"
+                                        value={subTaskInputs[t.id] || ''}
+                                        onChange={(e) => setSubTaskInputs({ ...subTaskInputs, [t.id]: e.target.value })}
+                                        placeholder="+ הוסף תת-משימה..."
+                                        style={{ flex: 1, padding: '4px 8px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px' }}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAddSubTask(t.id)}
+                                      />
+                                      <button onClick={() => handleAddSubTask(t.id)} style={{ padding: '4px 8px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>+</button>
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ padding: '14px 12px' }}>
                                   {t.assignee ? (
@@ -1141,11 +1144,37 @@ export default function App() {
                                 </td>
                                 <td style={{ padding: '14px 16px' }}>
                                   {(t.notes || []).map((n) => (
-                                    <div key={n.id} style={{ fontSize: '12px', backgroundColor: theme.subCardBg, padding: '6px 10px', borderRadius: '8px', marginBottom: '4px' }}><b>{n.author}:</b> {n.text}</div>
+                                    <div key={n.id} style={{ fontSize: '12px', backgroundColor: theme.subCardBg, padding: '8px 10px', borderRadius: '8px', marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span><b>{n.author}:</b></span>
+                                        {userRole === 'מנהל' && (
+                                          <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button onClick={() => setEditingNote({ taskId: t.id, noteId: n.id, text: n.text })} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px' }} title="ערוך">✏️</button>
+                                            <button onClick={() => handleDeleteNote(t.id, n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#ef4444' }} title="מחק">🗑️</button>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      {editingNote?.taskId === t.id && editingNote?.noteId === n.id ? (
+                                        <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                          <input
+                                            type="text"
+                                            value={editingNote.text}
+                                            onChange={(e) => setEditingNote({ ...editingNote, text: e.target.value })}
+                                            style={{ flex: 1, padding: '4px', borderRadius: '6px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '11px' }}
+                                          />
+                                          <button onClick={() => handleUpdateNote(t.id, n.id)} style={{ padding: '4px 8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>שמור</button>
+                                          <button onClick={() => setEditingNote(null)} style={{ padding: '4px 8px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>ביטול</button>
+                                        </div>
+                                      ) : (
+                                        <span style={{ color: theme.textMain }}>{n.text}</span>
+                                      )}
+                                    </div>
                                   ))}
+
                                   <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
                                     <input type="text" value={noteInputs[t.id] || ''} onChange={(e) => setNoteInputs({ ...noteInputs, [t.id]: e.target.value })} placeholder="הוסף הערה..." style={{ flex: 1, padding: '6px', borderRadius: '8px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '12px' }} onKeyDown={(e) => e.key === 'Enter' && handleAddNote(t.id)} />
-                                    <button onClick={() => handleAddNote(t.id)} style={{ padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px' }}>שלח</button>
+                                    <button onClick={() => handleAddNote(t.id)} style={{ padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', cursor: 'pointer' }}>שלח</button>
                                   </div>
                                 </td>
                                 {userRole === 'מנהל' && (
