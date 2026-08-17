@@ -55,6 +55,11 @@ interface ProjectDoc {
 const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
+const USERS: Record<string, { password: string; role: 'משתמש' | 'מנהל'; displayName: string }> = {
+  מנהל: { password: '123456', role: 'מנהל', displayName: 'מנהל' },
+  משתמש: { password: '1234', role: 'משתמש', displayName: 'משתמש' },
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
@@ -63,12 +68,14 @@ export default function App() {
   // התחברות
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  // סיסמת מנהל התחלתית 123456 עם אופציה לשינוי
-  const [adminPassword, setAdminPassword] = useState<string>(() => localStorage.getItem('taskly_admin_pass') || '123456');
+  // שינוי סיסמה אישית
+  const [userPasswords, setUserPasswords] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem('taskly_user_passwords');
+    return saved ? JSON.parse(saved) : { מנהל: '123456', משתמש: '1234' };
+  });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPasswordInput, setNewPasswordInput] = useState('');
   
@@ -78,12 +85,18 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'calendar' | 'dashboard'>('table');
   const [currentTab, setCurrentTab] = useState<'active' | 'archived' | 'trash'>('active');
   
-  // פרויקטים מרובים לבחירה עם תיבות סימון
+  // פרויקטים מרובים לבחירה
   const [selectedProjectFilters, setSelectedProjectFilters] = useState<string[]>(['הכל']);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
-  const [statusFilter, setStatusFilter] = useState<string>('הכל');
-  const [priorityFilter, setPriorityFilter] = useState<string>('הכל');
+  // סטטוסים מרובים לבחירה עם תיבות סימון
+  const [selectedStatusFilters, setSelectedStatusFilters] = useState<string[]>(['הכל']);
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+
+  // עדיפויות מרובות לבחירה עם תיבות סימון
+  const [selectedPriorityFilters, setSelectedPriorityFilters] = useState<string[]>(['הכל']);
+  const [isPriorityDropdownOpen, setIsPriorityDropdownOpen] = useState(false);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'delays' | 'none'>('none');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -188,18 +201,27 @@ export default function App() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    if (!nameInput.trim()) {
-      setAuthError('נא להזין שם מלא או שם משתמש.');
+    const username = nameInput.trim();
+    if (!username) {
+      setAuthError('נא להזין שם משתמש.');
       return;
     }
-    if (roleInput === 'מנהל' && passwordInput !== adminPassword) {
-      setAuthError('סיסמת מנהל שגויה (ברירת מחדל: 123456).');
+    const targetUser = USERS[username];
+    if (!targetUser) {
+      setAuthError('שם משתמש לא קיים במערכת.');
       return;
     }
-    localStorage.setItem('taskly_user', nameInput.trim());
-    localStorage.setItem('taskly_role', roleInput);
-    setCurrentUser(nameInput.trim());
-    setUserRole(roleInput);
+    const currentPass = userPasswords[username] || targetUser.password;
+    if (passwordInput !== currentPass) {
+      setAuthError('סיסמה שגויה.');
+      return;
+    }
+    localStorage.setItem('taskly_user', targetUser.displayName);
+    localStorage.setItem('taskly_role', targetUser.role);
+    setCurrentUser(targetUser.displayName);
+    setUserRole(targetUser.role);
+    setNameInput('');
+    setPasswordInput('');
   };
 
   const handleLogout = () => {
@@ -213,12 +235,13 @@ export default function App() {
 
   const handleUpdatePassword = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPasswordInput.trim()) return;
-    localStorage.setItem('taskly_admin_pass', newPasswordInput.trim());
-    setAdminPassword(newPasswordInput.trim());
+    if (!newPasswordInput.trim() || !currentUser) return;
+    const updated = { ...userPasswords, [currentUser]: newPasswordInput.trim() };
+    setUserPasswords(updated);
+    localStorage.setItem('taskly_user_passwords', JSON.stringify(updated));
     setNewPasswordInput('');
     setShowPasswordModal(false);
-    alert("סיסמת המנהל עודכנה בהצלחה!");
+    alert("הסיסמה האישית עודכנה בהצלחה!");
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -460,11 +483,9 @@ export default function App() {
     let result = tasks.filter((t) => {
       let matchTab = currentTab === 'trash' ? t.isDeleted : currentTab === 'archived' ? (!t.isDeleted && t.isArchived) : (!t.isDeleted && !t.isArchived);
       
-      // סינון פרויקטים מרובים
       const matchProject = selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(t.project);
-      
-      const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
-      const matchPriority = priorityFilter === 'הכל' || t.priority === priorityFilter;
+      const matchStatus = selectedStatusFilters.includes('הכל') || selectedStatusFilters.includes(t.status);
+      const matchPriority = selectedPriorityFilters.includes('הכל') || selectedPriorityFilters.includes(t.priority);
 
       const matchSearch = searchTerm === '' ||
         t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -490,7 +511,7 @@ export default function App() {
       result.sort((a, b) => (b.orderIndex || 0) - (a.orderIndex || 0));
     }
     return result;
-  }, [tasks, currentTab, selectedProjectFilters, statusFilter, priorityFilter, searchTerm, sortBy, sortOrder]);
+  }, [tasks, currentTab, selectedProjectFilters, selectedStatusFilters, selectedPriorityFilters, searchTerm, sortBy, sortOrder]);
 
   const getProjectColor = (pName: string) => {
     const p = projects.find((x) => x.name === pName);
@@ -565,13 +586,13 @@ export default function App() {
           <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                שם מלא / כינוי
+                שם משתמש
               </label>
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן את שמך..."
+                placeholder="הזן שם משתמש (למשל: מנהל)..."
                 autoFocus
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
@@ -579,40 +600,16 @@ export default function App() {
 
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                סוג הרשאה
+                סיסמה
               </label>
-              <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '4px', gap: '4px', border: `1px solid ${theme.border}` }}>
-                <button
-                  type="button"
-                  onClick={() => setRoleInput('משתמש')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: roleInput === 'משתמש' ? '2px solid #2563eb' : 'none', backgroundColor: roleInput === 'משתמש' ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : 'transparent', color: roleInput === 'משתמש' ? '#2563eb' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  משתמש
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRoleInput('מנהל')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: roleInput === 'מנהל' ? '2px solid #2563eb' : 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  מנהל
-                </button>
-              </div>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="הזן סיסמה..."
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
+              />
             </div>
-
-            {roleInput === 'מנהל' && (
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                  סיסמת מנהל
-                </label>
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="הזן סיסמה..."
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                />
-              </div>
-            )}
 
             <button
               type="submit"
@@ -654,11 +651,9 @@ export default function App() {
               <button onClick={() => { const activeTasks = tasks.filter((t) => !t.isDeleted && !t.isArchived); setSelectedTaskIdsForWhatsApp(activeTasks.map(t => t.id)); setShowWhatsAppModal(true); }} style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #25d366', backgroundColor: isDarkMode ? '#064e3b' : '#f0fdf4', color: '#16a34a', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
                 💬 WhatsApp
               </button>
-              {userRole === 'מנהל' && (
-                <button onClick={() => setShowPasswordModal(true)} style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
-                  🔑 שינוי סיסמה
-                </button>
-              )}
+              <button onClick={() => setShowPasswordModal(true)} style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.subCardBg, color: theme.textMain, fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
+                🔑 שינוי סיסמה
+              </button>
             </div>
           </div>
 
@@ -678,17 +673,17 @@ export default function App() {
           </div>
         </header>
 
-        {/* מודאל שינוי סיסמה */}
+        {/* מודאל שינוי סיסמה אישית */}
         {showPasswordModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '400px', border: `1px solid ${theme.border}` }}>
-              <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '800' }}>🔑 שינוי סיסמת מנהל</h3>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '800' }}>🔑 שינוי סיסמה אישית</h3>
               <form onSubmit={handleUpdatePassword} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <input
                   type="password"
                   value={newPasswordInput}
                   onChange={(e) => setNewPasswordInput(e.target.value)}
-                  placeholder="הזן סיסמה חדשה..."
+                  placeholder="הזן סיסמה חדשה למשתמש שלך..."
                   autoFocus
                   style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none' }}
                 />
@@ -762,7 +757,7 @@ export default function App() {
           </div>
         )}
 
-        {/* בורר פרויקטים מרובים באמצעות תיבות סימון (Checkboxes) נפתח */}
+        {/* שורת סינונים עליונה (פרויקטים מרובים באמצעות תיבות סימון) */}
         <div style={{ backgroundColor: theme.cardBg, borderRadius: '16px', padding: '16px 20px', border: `1px solid ${theme.border}`, marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
@@ -836,24 +831,85 @@ export default function App() {
           </div>
         </div>
 
-        {/* שורת חיפוש וסינונים */}
+        {/* שורת חיפוש וסינונים (כולל צ'קבוקסים לסטטוסים ולעדיפויות) */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
           <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="חיפוש משימה, אחראי, נושא..." style={{ flex: 1, minWidth: '200px', padding: '12px 18px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', outline: 'none' }} />
           
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', fontWeight: '700' }}>
-            <option value="הכל">כל הסטטוסים</option>
-            <option value="פתוח">פתוח</option>
-            <option value="בביצוע">בביצוע</option>
-            <option value="הושלם">הושלם</option>
-            <option value="נדחה">נדחה</option>
-          </select>
+          {/* סינון סטטוסים מרובים עם צ'קבוקסים */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
+              style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              {selectedStatusFilters.includes('הכל') ? 'כל הסטטוסים' : `סטטוסים (${selectedStatusFilters.length})`} ▾
+            </button>
+            {isStatusDropdownOpen && (
+              <div style={{ position: 'absolute', top: '115%', right: 0, backgroundColor: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', padding: '12px', zIndex: 50, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={selectedStatusFilters.includes('הכל')} onChange={(e) => { if (e.target.checked) setSelectedStatusFilters(['הכל']); }} />
+                  כל הסטטוסים
+                </label>
+                <hr style={{ borderColor: theme.border, margin: '4px 0' }} />
+                {['פתוח', 'בביצוע', 'הושלם', 'נדחה'].map((st) => (
+                  <label key={st} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStatusFilters.includes(st)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const updated = selectedStatusFilters.includes('הכל') ? [st] : [...selectedStatusFilters, st];
+                          setSelectedStatusFilters(updated);
+                        } else {
+                          const updated = selectedStatusFilters.filter(s => s !== st);
+                          setSelectedStatusFilters(updated.length === 0 ? ['הכל'] : updated);
+                        }
+                      }}
+                    />
+                    {st}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
 
-          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', fontWeight: '700' }}>
-            <option value="הכל">כל העדיפויות</option>
-            <option value="גבוהה">גבוהה</option>
-            <option value="בינונית">בינונית</option>
-            <option value="נמוכה">נמוכה</option>
-          </select>
+          {/* סינון עדיפויות מרובות עם צ'קבוקסים */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setIsPriorityDropdownOpen(!isPriorityDropdownOpen)}
+              style={{ padding: '12px 16px', borderRadius: '12px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, fontSize: '14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              {selectedPriorityFilters.includes('הכל') ? 'כל העדיפויות' : `עדיפויות (${selectedPriorityFilters.length})`} ▾
+            </button>
+            {isPriorityDropdownOpen && (
+              <div style={{ position: 'absolute', top: '115%', right: 0, backgroundColor: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', padding: '12px', zIndex: 50, minWidth: '180px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '700', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={selectedPriorityFilters.includes('הכל')} onChange={(e) => { if (e.target.checked) setSelectedPriorityFilters(['הכל']); }} />
+                  כל העדיפויות
+                </label>
+                <hr style={{ borderColor: theme.border, margin: '4px 0' }} />
+                {['גבוהה', 'בינונית', 'נמוכה'].map((pr) => (
+                  <label key={pr} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedPriorityFilters.includes(pr)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const updated = selectedPriorityFilters.includes('הכל') ? [pr] : [...selectedPriorityFilters, pr];
+                          setSelectedPriorityFilters(updated);
+                        } else {
+                          const updated = selectedPriorityFilters.filter(p => p !== pr);
+                          setSelectedPriorityFilters(updated.length === 0 ? ['הכל'] : updated);
+                        }
+                      }}
+                    />
+                    {pr}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
 
           {userRole === 'מנהל' && currentTab === 'active' && (
             <button onClick={() => setShowAddTaskModal(true)} style={{ padding: '12px 24px', backgroundColor: '#2563eb', color: '#ffffff', border: 'none', borderRadius: '12px', fontWeight: '800', cursor: 'pointer', fontSize: '14px' }}>+ משימה חדשה</button>
@@ -994,9 +1050,12 @@ export default function App() {
           </div>
         ) : (
           
-          /* תצוגת טבלה או כרטיסיות הרגילה (מציגה רק פרויקטים שיש בהם משימות תואמות) */
+          /* תצוגת טבלה או כרטיסיות (מציגה פרויקטים לפי סינון נכון) */
           allProjectNames
-            .filter((p) => (selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p)) && filteredTasks.some(t => t.project === p))
+            .filter((p) => {
+              const matchSelectedProj = selectedProjectFilters.includes('הכל') || selectedProjectFilters.includes(p);
+              return matchSelectedProj;
+            })
             .map((projectName) => {
               const projectTasks = filteredTasks.filter((t) => t.project === projectName);
               const projectDoc = projects.find((p) => p.name === projectName);
@@ -1020,7 +1079,7 @@ export default function App() {
                   </div>
 
                   {projectTasks.length === 0 ? (
-                    <div style={{ padding: '36px', textAlign: 'center', color: theme.textMuted, fontSize: '14px' }}>אין משימות להצגה בפרויקט זה.</div>
+                    <div style={{ padding: '36px', textAlign: 'center', color: theme.textMuted, fontSize: '14px' }}>אין משימות להצגה בפרויקט זה תחת הסינון הנוכחי.</div>
                   ) : viewMode === 'table' ? (
                     
                     <div style={{ overflowX: 'auto' }}>
