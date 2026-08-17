@@ -68,9 +68,6 @@ export default function App() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   const [adminPassword, setAdminPassword] = useState('1234');
-  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
-  const [newAdminPasswordInput, setNewAdminPasswordInput] = useState('');
-
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
@@ -83,7 +80,6 @@ export default function App() {
   const [sortBy, setSortBy] = useState<'dueDate' | 'priority' | 'delays' | 'none'>('none');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [selectedTaskIdsForWhatsApp, setSelectedTaskIdsForWhatsApp] = useState<string[]>([]);
 
@@ -100,24 +96,10 @@ export default function App() {
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
-  const [isManagerOnlyNote, setIsManagerOnlyNote] = useState<{ [taskId: string]: boolean }>({});
-  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem('taskly_theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setShowCommandPalette((prev) => !prev);
-      }
-      if (e.key === 'Escape') setShowCommandPalette(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -297,8 +279,7 @@ export default function App() {
       id: `note_${Date.now()}`,
       text,
       author: currentUser || 'אורח',
-      time: `${formattedDate} ${formattedTime}`,
-      isManagerOnly: userRole === 'מנהל' && !!isManagerOnlyNote[taskId]
+      time: `${formattedDate} ${formattedTime}`
     }];
 
     await updateDoc(doc(db, 'tasks', taskId), { notes: newNotes });
@@ -350,21 +331,6 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const handleExecuteWhatsAppSend = () => {
-    const relevant = tasks.filter((t) => selectedTaskIdsForWhatsApp.includes(t.id));
-    if (relevant.length === 0) {
-      alert("לא נבחרו משימות לשיתוף.");
-      return;
-    }
-    let text = `📋 *סיכום משימות נבחרות*\n\n`;
-    relevant.forEach((t, idx) => {
-      text += `${idx + 1}. *[פרויקט: ${t.project}]* ${t.topic ? `(${t.topic}) ` : ''}- ${t.description}\n`;
-      text += `   👤 אחראי: ${t.assignee ? t.assignee.replace(/\n/g, ', ') : 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | סטטוס: ${t.status}\n\n`;
-    });
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
-    setShowWhatsAppModal(false);
-  };
-
   const allProjectNames = useMemo(() => {
     return Array.from(new Set([...projects.map((p) => p.name), ...tasks.map((t) => t.project)]));
   }, [projects, tasks]);
@@ -385,7 +351,6 @@ export default function App() {
       let matchTab = currentTab === 'trash' ? t.isDeleted : currentTab === 'archived' ? (!t.isDeleted && t.isArchived) : (!t.isDeleted && !t.isArchived);
       const matchProject = selectedProjectFilter === 'הכל' || t.project === selectedProjectFilter;
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
-      
       const matchPriority = priorityFilter === 'הכל' || (t.priority === priorityFilter && t.topic && t.topic.trim() !== '');
 
       const matchSearch = searchTerm === '' ||
@@ -423,8 +388,7 @@ export default function App() {
     return {
       active: tasks.filter((t) => !t.isDeleted && !t.isArchived).length,
       archived: tasks.filter((t) => !t.isDeleted && t.isArchived).length,
-      trash: tasks.filter((t) => t.isDeleted).length,
-      completedActive: tasks.filter((t) => !t.isDeleted && !t.isArchived && t.status === 'הושלם').length
+      trash: tasks.filter((t) => t.isDeleted).length
     };
   }, [tasks]);
 
@@ -696,7 +660,7 @@ export default function App() {
           </div>
         )}
 
-        {/* תצוגת דשבורד מעוצבת */}
+        {/* תצוגה ראשית */}
         {viewMode === 'dashboard' ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', marginBottom: '28px' }}>
             <div style={{ backgroundColor: theme.cardBg, borderRadius: '20px', padding: '24px', border: `1px solid ${theme.border}` }}>
@@ -767,7 +731,6 @@ export default function App() {
           </div>
         ) : (
           
-          /* תצוגת טבלה או כרטיסיות הרגילה */
           allProjectNames
             .filter((p) => selectedProjectFilter === 'הכל' || selectedProjectFilter === p)
             .map((projectName) => {
@@ -865,10 +828,8 @@ export default function App() {
                                 {userRole === 'מנהל' && (
                                   <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📋</button>
                                       <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>✏️</button>
-                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📦</button>
-                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626' }}>🗑️</button>
+                                      <button onClick={() => handleDeleteProject(t.id, t.project)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626' }}>🗑️</button>
                                     </div>
                                   </td>
                                 )}
@@ -912,7 +873,7 @@ export default function App() {
                               {userRole === 'מנהל' && (
                                 <div style={{ display: 'flex', gap: '4px' }}>
                                   <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>✏️ ערוך</button>
-                                  <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
+                                  <button onClick={() => handleDeleteProject(t.id, t.project)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
                                 </div>
                               )}
                             </div>
