@@ -56,21 +56,21 @@ interface ProjectDoc {
 const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
+const USERS: Record<string, { password: string; role: 'משתמש' | 'מנהל'; displayName: string }> = {
+  מנהל: { password: '1234', role: 'מנהל', displayName: 'מנהל' },
+  משתמש: { password: '1234', role: 'משתמש', displayName: 'משתמש' },
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
   const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
-  // התחברות
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  // סיסמת מנהל
-  const [adminPassword, setAdminPassword] = useState('1234');
-  
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
@@ -106,16 +106,6 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u) signInAnonymously(auth).catch((err) => console.error(err));
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const docRef = doc(db, 'settings', 'admin_config');
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().adminPassword) {
-        setAdminPassword(docSnap.data().adminPassword);
-      }
     });
     return () => unsubscribe();
   }, []);
@@ -193,18 +183,31 @@ export default function App() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    if (!nameInput.trim()) {
-      setAuthError('נא להזין שם מלא או שם משתמש.');
+
+    const username = nameInput.trim();
+    const user = USERS[username];
+
+    if (!username) {
+      setAuthError('נא להזין שם משתמש.');
       return;
     }
-    if (roleInput === 'מנהל' && passwordInput !== adminPassword) {
-      setAuthError('סיסמת מנהל שגויה.');
+
+    if (!user) {
+      setAuthError('שם המשתמש אינו מורשה להיכנס למערכת.');
       return;
     }
-    localStorage.setItem('taskly_user', nameInput.trim());
-    localStorage.setItem('taskly_role', roleInput);
-    setCurrentUser(nameInput.trim());
-    setUserRole(roleInput);
+
+    if (passwordInput !== user.password) {
+      setAuthError('סיסמה שגויה.');
+      return;
+    }
+
+    localStorage.setItem('taskly_user', user.displayName);
+    localStorage.setItem('taskly_role', user.role);
+    setCurrentUser(user.displayName);
+    setUserRole(user.role);
+    setNameInput('');
+    setPasswordInput('');
   };
 
   const handleLogout = () => {
@@ -341,6 +344,17 @@ export default function App() {
     } catch (err) {
       console.error(err);
       alert('שגיאה בעדכון סל המחזור.');
+    }
+  };
+
+  const handlePermanentDelete = async (taskId: string) => {
+    if (userRole !== 'מנהל') return;
+    if (!window.confirm("למחוק משימה זו לצמיתות?")) return;
+    try {
+      await deleteDoc(doc(db, 'tasks', taskId));
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה במחיקת המשימה לצמיתות.');
     }
   };
 
@@ -535,7 +549,7 @@ export default function App() {
           </div>
 
           <h2 style={{ fontSize: '25px', fontWeight: '900', color: theme.textMain, margin: '0 0 6px 0' }}>כניסה למערכת</h2>
-          <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0', fontWeight: '500' }}>ניהול ומעקב משימות ופרויקטים</p>
+          <p style={{ fontSize: '14px', color: theme.textMuted, margin: '0 0 24px 0', fontWeight: '500' }}>שם משתמש וסיסמה</p>
 
           {authError && (
             <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'right' }}>
@@ -546,13 +560,13 @@ export default function App() {
           <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                שם מלא / כינוי
+                שם משתמש
               </label>
               <input
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן את שמך..."
+                placeholder="הזן שם משתמש..."
                 autoFocus
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
@@ -560,40 +574,16 @@ export default function App() {
 
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                סוג הרשאה
+                סיסמה
               </label>
-              <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '4px', gap: '4px', border: `1px solid ${theme.border}` }}>
-                <button
-                  type="button"
-                  onClick={() => setRoleInput('משתמש')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'משתמש' ? '#2563eb' : 'transparent', color: roleInput === 'משתמש' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  משתמש
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRoleInput('מנהל')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  מנהל
-                </button>
-              </div>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="הזן סיסמה..."
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
+              />
             </div>
-
-            {roleInput === 'מנהל' && (
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>
-                  סיסמת מנהל
-                </label>
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="הזן סיסמה..."
-                  style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                />
-              </div>
-            )}
 
             <button
               type="submit"
@@ -1006,10 +996,19 @@ export default function App() {
                                 {userRole === 'מנהל' && (
                                   <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="שכפל משימה">📋</button>
-                                      <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="ערוך משימה">✏️</button>
-                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="העבר לארכיון">📦</button>
-                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626', cursor: 'pointer' }} title="העבר לסל מחזור">🗑️</button>
+                                      {currentTab === 'trash' ? (
+                                        <>
+                                          <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="שחזר משימה">שחזר</button>
+                                          <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }} title="מחק לצמיתות">מחק</button>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="שכפל משימה">📋</button>
+                                          <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="ערוך משימה">✏️</button>
+                                          <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px', cursor: 'pointer' }} title="העבר לארכיון">📦</button>
+                                          <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626', cursor: 'pointer' }} title="העבר לסל מחזור">🗑️</button>
+                                        </>
+                                      )}
                                     </div>
                                   </td>
                                 )}
@@ -1052,10 +1051,19 @@ export default function App() {
 
                               {userRole === 'מנהל' && (
                                 <div style={{ display: 'flex', gap: '6px' }}>
-                                  <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="שכפל">📋</button>
-                                  <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ערוך">✏️</button>
-                                  <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ארכיון">📦</button>
-                                  <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }} title="מחק">🗑️</button>
+                                  {currentTab === 'trash' ? (
+                                    <>
+                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>שחזר</button>
+                                      <button onClick={() => handlePermanentDelete(t.id)} style={{ padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dc2626', color: '#fff', border: 'none', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>מחק</button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="שכפל">📋</button>
+                                      <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ערוך">✏️</button>
+                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} title="ארכיון">📦</button>
+                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }} title="מחק">🗑️</button>
+                                    </>
+                                  )}
                                 </div>
                               )}
                             </div>
