@@ -57,7 +57,6 @@ const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'S
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
-  // כל המשתמשים מוגדרים כמנהלים
   const userRole = 'מנהל';
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
@@ -605,7 +604,7 @@ export default function App() {
                 type="text"
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
-                placeholder="הזן שם משתמש (למשל: משה)..."
+                placeholder="הזן שם משתמש..."
                 autoFocus
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box', fontFamily: 'inherit' }}
               />
