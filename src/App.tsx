@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { auth, db } from './firebase';
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import {
   collection,
   addDoc,
@@ -56,18 +55,21 @@ interface ProjectDoc {
 const PROJECT_COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0284c7', '#4f46e5'];
 const FONT_FAMILY = "'Assistant', 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
+const USERS: Record<string, { password: string; role: 'משתמש' | 'מנהל'; displayName: string }> = {
+  מנהל: { password: '1234', role: 'מנהל', displayName: 'מנהל' },
+  משתמש: { password: '1234', role: 'משתמש', displayName: 'משתמש' },
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => localStorage.getItem('taskly_user'));
-  const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as any) || 'משתמש');
+  const [userRole, setUserRole] = useState<'משתמש' | 'מנהל'>(() => (localStorage.getItem('taskly_role') as 'משתמש' | 'מנהל') || 'משתמש');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => localStorage.getItem('taskly_theme') === 'dark');
 
   const [nameInput, setNameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [roleInput, setRoleInput] = useState<'משתמש' | 'מנהל'>('משתמש');
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  const [adminPassword, setAdminPassword] = useState('1234');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
 
@@ -96,27 +98,11 @@ export default function App() {
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
 
   const [noteInputs, setNoteInputs] = useState<{ [taskId: string]: string }>({});
+  const [isManagerOnlyNote, setIsManagerOnlyNote] = useState<{ [taskId: string]: boolean }>({});
 
   useEffect(() => {
     localStorage.setItem('taskly_theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (!u) signInAnonymously(auth).catch((err) => console.error(err));
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const docRef = doc(db, 'settings', 'admin_config');
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().adminPassword) {
-        setAdminPassword(docSnap.data().adminPassword);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   useEffect(() => {
     const q = query(collection(db, 'projects_list'), orderBy('name', 'asc'));
@@ -182,18 +168,31 @@ export default function App() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    if (!nameInput.trim()) {
-      setAuthError('נא להזין שם מלא או שם משתמש.');
+
+    const username = nameInput.trim();
+    const user = USERS[username];
+
+    if (!username) {
+      setAuthError('נא להזין שם משתמש.');
       return;
     }
-    if (roleInput === 'מנהל' && passwordInput !== adminPassword) {
-      setAuthError('סיסמת מנהל שגויה.');
+
+    if (!user) {
+      setAuthError('שם המשתמש אינו מורשה להיכנס למערכת.');
       return;
     }
-    localStorage.setItem('taskly_user', nameInput.trim());
-    localStorage.setItem('taskly_role', roleInput);
-    setCurrentUser(nameInput.trim());
-    setUserRole(roleInput);
+
+    if (passwordInput !== user.password) {
+      setAuthError('סיסמה שגויה.');
+      return;
+    }
+
+    localStorage.setItem('taskly_user', user.displayName);
+    localStorage.setItem('taskly_role', user.role);
+    setCurrentUser(user.displayName);
+    setUserRole(user.role);
+    setNameInput('');
+    setPasswordInput('');
   };
 
   const handleLogout = () => {
@@ -279,7 +278,8 @@ export default function App() {
       id: `note_${Date.now()}`,
       text,
       author: currentUser || 'אורח',
-      time: `${formattedDate} ${formattedTime}`
+      time: `${formattedDate} ${formattedTime}`,
+      isManagerOnly: userRole === 'מנהל' && !!isManagerOnlyNote[taskId]
     }];
 
     await updateDoc(doc(db, 'tasks', taskId), { notes: newNotes });
@@ -302,6 +302,68 @@ export default function App() {
       completedDate: newStatus === 'הושלם' ? todayStr : '',
       notes: [...(task?.notes || []), auditNote]
     });
+  };
+
+  const handleDuplicateTask = async (task: Task) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await addDoc(collection(db, 'tasks'), {
+        project: task.project,
+        topic: task.topic,
+        description: `${task.description} (עותק)`,
+        assignee: task.assignee,
+        startDate: new Date().toISOString().split('T')[0],
+        dueDate: task.dueDate,
+        completedDate: '',
+        delays: 0,
+        priority: task.priority,
+        isArchived: false,
+        isDeleted: false,
+        status: 'פתוח',
+        orderIndex: Date.now(),
+        notes: [],
+        subtasks: task.subtasks || [],
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בשכפול המשימה.');
+    }
+  };
+
+  const handleToggleArchive = async (taskId: string, currentValue: boolean) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await updateDoc(doc(db, 'tasks', taskId), {
+        isArchived: !currentValue,
+        isDeleted: false
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בעדכון הארכיון.');
+    }
+  };
+
+  const handleToggleTrash = async (taskId: string, currentValue: boolean) => {
+    if (userRole !== 'מנהל') return;
+    try {
+      await updateDoc(doc(db, 'tasks', taskId), {
+        isDeleted: !currentValue,
+        isArchived: false
+      });
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בעדכון סל המחזור.');
+    }
+  };
+
+  const isDueSoon = (dueDate: string, status: string) => {
+    if (!dueDate || status === 'הושלם') return false;
+    const due = new Date(`${dueDate}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    return diff >= 0 && diff <= 3;
   };
 
   const handleExportCSV = () => {
@@ -331,6 +393,21 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const handleExecuteWhatsAppSend = () => {
+    const relevant = tasks.filter((t) => selectedTaskIdsForWhatsApp.includes(t.id));
+    if (relevant.length === 0) {
+      alert("לא נבחרו משימות לשיתוף.");
+      return;
+    }
+    let text = `📋 *סיכום משימות נבחרות*\n\n`;
+    relevant.forEach((t, idx) => {
+      text += `${idx + 1}. *[פרויקט: ${t.project}]* ${t.topic ? `(${t.topic}) ` : ''}- ${t.description}\n`;
+      text += `   👤 אחראי: ${t.assignee ? t.assignee.replace(/\n/g, ', ') : 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | סטטוס: ${t.status}\n\n`;
+    });
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    setShowWhatsAppModal(false);
+  };
+
   const allProjectNames = useMemo(() => {
     return Array.from(new Set([...projects.map((p) => p.name), ...tasks.map((t) => t.project)]));
   }, [projects, tasks]);
@@ -351,7 +428,7 @@ export default function App() {
       let matchTab = currentTab === 'trash' ? t.isDeleted : currentTab === 'archived' ? (!t.isDeleted && t.isArchived) : (!t.isDeleted && !t.isArchived);
       const matchProject = selectedProjectFilter === 'הכל' || t.project === selectedProjectFilter;
       const matchStatus = statusFilter === 'הכל' || t.status === statusFilter;
-      const matchPriority = priorityFilter === 'הכל' || (t.priority === priorityFilter && t.topic && t.topic.trim() !== '');
+      const matchPriority = priorityFilter === 'הכל' || t.priority === priorityFilter;
 
       const matchSearch = searchTerm === '' ||
         t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -445,22 +522,13 @@ export default function App() {
 
           <form onSubmit={handleLogin} style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>שם מלא / כינוי</label>
-              <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="הזן את שמך..." autoFocus style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }} />
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>שם משתמש</label>
+              <input type="text" value={nameInput} onChange={(e) => setNameInput(e.target.value)} placeholder="הזן שם משתמש..." autoFocus style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }} />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>סוג הרשאה</label>
-              <div style={{ display: 'flex', backgroundColor: theme.subCardBg, borderRadius: '10px', padding: '4px', gap: '4px', border: `1px solid ${theme.border}` }}>
-                <button type="button" onClick={() => setRoleInput('משתמש')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'משתמש' ? '#2563eb' : 'transparent', color: roleInput === 'משתמש' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer' }}>משתמש</button>
-                <button type="button" onClick={() => setRoleInput('מנהל')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: roleInput === 'מנהל' ? '#2563eb' : 'transparent', color: roleInput === 'מנהל' ? '#ffffff' : theme.textMuted, fontWeight: '700', cursor: 'pointer' }}>מנהל</button>
-              </div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>סיסמה</label>
+              <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="הזן סיסמה..." autoComplete="current-password" style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }} />
             </div>
-            {roleInput === 'מנהל' && (
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: '700', color: theme.textMain, marginBottom: '6px' }}>סיסמת מנהל</label>
-                <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="הזן סיסמה..." style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: `1px solid ${theme.border}`, backgroundColor: theme.inputBg, color: theme.inputText, outline: 'none', fontSize: '14px', boxSizing: 'border-box' }} />
-              </div>
-            )}
             <button type="submit" style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '15px', fontWeight: '800', cursor: 'pointer', marginTop: '4px' }}>התחבר למערכת</button>
           </form>
         </div>
@@ -829,8 +897,10 @@ export default function App() {
                                 {userRole === 'מנהל' && (
                                   <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                                      <button onClick={() => handleDuplicateTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📋</button>
                                       <button onClick={() => setEditingTask(t)} style={{ padding: '4px 6px', borderRadius: '6px' }}>✏️</button>
-                                      <button onClick={() => handleDeleteProject(t.id, t.project)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626' }}>🗑️</button>
+                                      <button onClick={() => handleToggleArchive(t.id, t.isArchived)} style={{ padding: '4px 6px', borderRadius: '6px' }}>📦</button>
+                                      <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 6px', borderRadius: '6px', color: '#dc2626' }}>🗑️</button>
                                     </div>
                                   </td>
                                 )}
@@ -874,7 +944,7 @@ export default function App() {
                               {userRole === 'מנהל' && (
                                 <div style={{ display: 'flex', gap: '4px' }}>
                                   <button onClick={() => setEditingTask(t)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>✏️ ערוך</button>
-                                  <button onClick={() => handleDeleteProject(t.id, t.project)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
+                                  <button onClick={() => handleToggleTrash(t.id, t.isDeleted)} style={{ padding: '4px 8px', borderRadius: '6px', fontSize: '11px', color: '#dc2626', cursor: 'pointer' }}>🗑️ מחק</button>
                                 </div>
                               )}
                             </div>
