@@ -68,7 +68,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  // סיסמת מנהל מ-Firebase
+  // סיסמת מנהל
   const [adminPassword, setAdminPassword] = useState('1234');
   
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -342,6 +342,21 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const handleExecuteWhatsAppSend = () => {
+    const relevant = tasks.filter((t) => selectedTaskIdsForWhatsApp.includes(t.id));
+    if (relevant.length === 0) {
+      alert("לא נבחרו משימות לשיתוף.");
+      return;
+    }
+    let text = `📋 *סיכום משימות נבחרות*\n\n`;
+    relevant.forEach((t, idx) => {
+      text += `${idx + 1}. *[פרויקט: ${t.project}]* ${t.topic ? `(${t.topic}) ` : ''}- ${t.description}\n`;
+      text += `   👤 אחראי: ${t.assignee ? t.assignee.replace(/\n/g, ', ') : 'ללא אחראי'} | 📅 יעד: ${t.dueDate || 'ללא יעד'} | סטטוס: ${t.status}\n\n`;
+    });
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    setShowWhatsAppModal(false);
+  };
+
   const allProjectNames = useMemo(() => {
     return Array.from(new Set([...projects.map((p) => p.name), ...tasks.map((t) => t.project)]));
   }, [projects, tasks]);
@@ -436,7 +451,6 @@ export default function App() {
     inputText: isDarkMode ? '#ffffff' : '#0f172a'
   };
 
-  // מסך כניסה מקורי ומדויק
   if (!currentUser) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.bg, padding: '20px', direction: 'rtl', fontFamily: FONT_FAMILY, transition: 'background-color 0.2s', position: 'relative' }}>
@@ -526,7 +540,6 @@ export default function App() {
     );
   }
 
-  // --- מסך ראשי מלא ---
   return (
     <div style={{ minHeight: '100vh', backgroundColor: theme.bg, color: theme.textMain, padding: '24px 16px', direction: 'rtl', fontFamily: FONT_FAMILY, transition: 'background-color 0.2s' }}>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&display=swap" />
@@ -573,7 +586,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* מודאל וואטסאפ */}
+        {/* מודאל וואטסאפ מעודכן */}
         {showWhatsAppModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: '16px' }}>
             <div style={{ backgroundColor: theme.cardBg, color: theme.textMain, borderRadius: '24px', padding: '28px', width: '100%', maxWidth: '540px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', border: `1px solid ${theme.border}` }}>
@@ -590,7 +603,7 @@ export default function App() {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={handleExecuteWhatsAppSend} style={{ flex: 1, padding: '12px', backgroundColor: '#25d366', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '800', cursor: 'pointer' }}>שלח בוואטסאפ</button>
+                <button onClick={handleExecuteWhatsAppSend} style={{ flex: 1, padding: '12px', backgroundColor: '#25d366', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '800', cursor: 'pointer' }}>שלח משימות בוואטסאפ</button>
                 <button onClick={() => setShowWhatsAppModal(false)} style={{ padding: '12px 18px', backgroundColor: theme.subCardBg, color: theme.textMuted, border: 'none', borderRadius: '10px', fontWeight: '700', cursor: 'pointer' }}>ביטול</button>
               </div>
             </div>
